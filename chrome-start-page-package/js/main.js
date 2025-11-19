@@ -196,17 +196,24 @@ class ChromeStartPageApp {
 
             try {
                 const groups = await groupManager.getAllGroups();
-                groupsContainer.innerHTML = '';
 
                 if (groups.length === 0) {
+                    groupsContainer.innerHTML = '';
                     this.updateEmptyState();
                     return;
                 }
 
+                // 创建文档片段，避免多次重排
+                const fragment = document.createDocumentFragment();
+                
                 for (const group of groups) {
                     const groupElement = await this.createGroupElement(group);
-                    groupsContainer.appendChild(groupElement);
+                    fragment.appendChild(groupElement);
                 }
+                
+                // 一次性替换所有内容，减少闪烁
+                groupsContainer.innerHTML = '';
+                groupsContainer.appendChild(fragment);
                 
                 // 渲染完成后更新空状态
                 this.updateEmptyState();
