@@ -21,6 +21,7 @@ jobs:
 
     - name: Install dependencies
       run: |
+        cd chrome-extension
         npm install
 
     - name: Determine version
@@ -38,7 +39,7 @@ jobs:
     - name: Update icons
       run: |
         cd chrome-extension
-        node scripts/resize-icon.js
+        npm run update-icons
 
     - name: Build extension package
       run: |
