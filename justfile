@@ -3,7 +3,7 @@
 
 # 扩展基本信息
 EXT_NAME := "chrome-start-page"
-VERSION := "1.0.0"
+VERSION := "$(git rev-parse --short HEAD 2>/dev/null || echo '1.0.0')"
 ZIP_NAME := EXT_NAME + "-v" + VERSION + ".zip"
 SOURCE_DIR := "chrome-extension"
 
@@ -20,8 +20,14 @@ clean:
 # 打包扩展
 package: clean
     @echo "📦 打包 Chrome 扩展..."
-    @./package-extension.sh
+    @./package-extension.sh {{VERSION}}
     @echo "✅ 打包完成: build/{{ZIP_NAME}}"
+
+# 使用指定版本号打包扩展
+package-version VERSION:
+    @echo "📦 使用版本号 {{VERSION}} 打包 Chrome 扩展..."
+    @./package-extension.sh {{VERSION}}
+    @echo "✅ 打包完成: build/{{EXT_NAME}}-v{{VERSION}}.zip"
 
 # 验证打包文件
 verify: 

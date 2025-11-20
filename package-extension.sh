@@ -3,13 +3,16 @@
 # Chrome Extension 打包脚本
 # 创建可分发的扩展包
 
+# 获取版本号参数，默认使用git commit的短hash
+VERSION=${1:-$(git rev-parse --short HEAD 2>/dev/null || echo "1.0.0")}
+
 # 创建构建目录
 BUILD_DIR="build"
 PACKAGE_DIR="$BUILD_DIR/chrome-start-page-package"
 mkdir -p $BUILD_DIR
 rm -rf $PACKAGE_DIR
 mkdir -p $PACKAGE_DIR
-echo "🚀 开始打包Chrome Start Page Plugin..."
+echo "🚀 开始打包Chrome Start Page Plugin v$VERSION..."
 
 # 复制所有必要的文件到打包目录
 echo "📁 复制扩展文件..."
@@ -24,7 +27,7 @@ rm -f $PACKAGE_DIR/PROJECT-SUMMARY.md
 # 创建ZIP包
 echo "📦 创建ZIP包..."
 cd $PACKAGE_DIR
-zip -r ../chrome-start-page-v1.0.0.zip . -x "*.DS_Store" "*/.git/*" "*/node_modules/*"
+zip -r ../chrome-start-page-v$VERSION.zip . -x "*.DS_Store" "*/.git/*" "*/node_modules/*"
 cd ../..
 
 # 创建安装说明文件
@@ -94,13 +97,13 @@ EOF
 echo ""
 echo "✅ 打包完成！"
 echo "📂 打包目录: $PACKAGE_DIR"
-echo "📦 ZIP文件: build/chrome-start-page-v1.0.0.zip"
+echo "📦 ZIP文件: build/chrome-start-page-v$VERSION.zip"
 echo ""
 echo "📋 包含的文件:"
 ls -la $PACKAGE_DIR/
 echo ""
 echo "🚀 安装步骤:"
-echo "1. 解压 build/chrome-start-page-v1.0.0.zip"
+echo "1. 解压 build/chrome-start-page-v$VERSION.zip"
 echo "2. 在Chrome中打开 chrome://extensions/"
 echo "3. 开启开发者模式"
 echo "4. 加载已解压的扩展程序"

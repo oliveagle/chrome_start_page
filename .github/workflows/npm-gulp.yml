@@ -1,8 +1,10 @@
-name: NodeJS with Gulp
+name: Chrome Start Page Extension Build
 
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - 'release-v*'
   pull_request:
     branches: [ "main" ]
 
@@ -26,3 +28,54 @@ jobs:
       run: |
         npm install
         gulp
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+
+    - name: Install dependencies
+      run: |
+        npm install
+
+    - name: Determine version
+      id: determine_version
+      run: |
+        if [[ "${GITHUB_REF}" == refs/tags/release-v* ]]; then
+          # 从标签中提取版本号
+          VERSION=${GITHUB_REF#refs/tags/release-v}
+        else
+          # 使用git commit的短hash作为版本号
+          VERSION=$(git rev-parse --short HEAD)
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Build extension package
+      run: |
+        ./package-extension.sh ${{ steps.determine_version.outputs.VERSION }}
+
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: release-v${{ steps.determine_version.outputs.VERSION }}
+        release_name: Release v${{ steps.determine_version.outputs.VERSION }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./build/chrome-start-page-v${{ steps.determine_version.outputs.VERSION }}.zip
+        asset_name: chrome-start-page-v${{ steps.determine_version.outputs.VERSION }}.zip
+        asset_content_type: application/zip
