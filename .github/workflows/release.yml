@@ -1,4 +1,4 @@
-name: Chrome Start Page Extension Build
+name: Chrome Start Page Extension Release
 
 on:
   push:
@@ -9,28 +9,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node-version: [18.x, 20.x, 22.x]
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
-      with:
-        node-version: ${{ matrix.node-version }}
-
-    - name: Build
-      run: |
-        npm install
-        gulp
-
   release:
-    needs: build
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -55,6 +34,11 @@ jobs:
           VERSION=$(git rev-parse --short HEAD)
         fi
         echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Update icons
+      run: |
+        cd chrome-extension
+        node scripts/resize-icon.js
 
     - name: Build extension package
       run: |
