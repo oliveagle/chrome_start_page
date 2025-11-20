@@ -78,7 +78,10 @@
                 <form id="bookmarkForm">
                     <div class="form-group">
                         <label for="bookmarkTitle">书签标题</label>
-                        <input type="text" id="bookmarkTitle" name="bookmarkTitle" required maxlength="100">
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <input type="text" id="bookmarkTitle" name="bookmarkTitle" required maxlength="100" style="flex: 1;">
+                            <button type="button" id="refreshTitleBtn" class="btn btn-secondary" title="刷新标题">🔄</button>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="bookmarkUrl">网址</label>

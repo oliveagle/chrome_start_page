@@ -93,14 +93,8 @@ class ChromeStartPageApp {
             });
         });
 
-        // 点击模态框背景关闭
-        document.querySelectorAll('.modal').forEach(modal => {
-            modal.addEventListener('click', (e) => {
-                if (e.target === modal) {
-                    this.hideModal(modal.id);
-                }
-            });
-        });
+        // 移除点击背景关闭功能，防止失焦后模态框消失
+        // 只能通过点击关闭按钮或按ESC键关闭
 
         // ESC键关闭模态框
         document.addEventListener('keydown', (e) => {
@@ -128,6 +122,25 @@ class ChromeStartPageApp {
         const refreshIconBtn = document.getElementById('refreshIconBtn');
         if (refreshIconBtn) {
             refreshIconBtn.addEventListener('click', () => this.handleRefreshIcon());
+        }
+        
+        // 刷新标题按钮
+        const refreshTitleBtn = document.getElementById('refreshTitleBtn');
+        if (refreshTitleBtn) {
+            refreshTitleBtn.addEventListener('click', () => this.handleRefreshTitle());
+        }
+        
+        // URL 输入框变化时自动获取标题
+        const bookmarkUrlInput = document.getElementById('bookmarkUrl');
+        if (bookmarkUrlInput) {
+            // 防抖处理
+            let urlChangeTimeout;
+            bookmarkUrlInput.addEventListener('input', (e) => {
+                clearTimeout(urlChangeTimeout);
+                urlChangeTimeout = setTimeout(() => {
+                    this.handleUrlChange(e.target.value);
+                }, 800); // 800ms 防抖
+            });
         }
         
         // 预览自定义图标按钮
@@ -858,6 +871,119 @@ class ChromeStartPageApp {
                 }
             }
         });
+    }
+    
+    // 从 URL 获取页面标题
+    async fetchTitleFromUrl(url) {
+        return new Promise((resolve) => {
+            if (typeof chrome !== 'undefined' && chrome.runtime) {
+                chrome.runtime.sendMessage(
+                    { action: 'fetchPageTitle', url: url },
+                    (response) => {
+                        if (response && response.success && response.title) {
+                            resolve(response.title);
+                        } else {
+                            // 如果获取失败，返回域名
+                            try {
+                                const urlObj = new URL(url);
+                                resolve(urlObj.hostname);
+                            } catch (error) {
+                                resolve(null);
+                            }
+                        }
+                    }
+                );
+            } else {
+                // 如果没有 chrome.runtime，返回域名
+                try {
+                    const urlObj = new URL(url);
+                    resolve(urlObj.hostname);
+                } catch (error) {
+                    resolve(null);
+                }
+            }
+        });
+    }
+    
+    // 处理 URL 输入框变化
+    async handleUrlChange(url) {
+        const trimmedUrl = url.trim();
+        if (!trimmedUrl) return;
+        
+        // 验证 URL
+        try {
+            const normalizedUrl = storageManager.normalizeUrl(trimmedUrl);
+            if (!storageManager.isValidUrl(normalizedUrl)) {
+                return; // URL 无效，不做处理
+            }
+            
+            // 自动获取标题
+            const titleInput = document.getElementById('bookmarkTitle');
+            if (titleInput && !titleInput.value.trim()) {
+                // 只有当标题为空时才自动填充
+                const title = await this.fetchTitleFromUrl(normalizedUrl);
+                if (title) {
+                    titleInput.value = title;
+                }
+            }
+            
+            // 自动获取图标
+            const iconUrl = await this.fetchIconFromUrl(normalizedUrl);
+            if (iconUrl) {
+                this.showIconPreview(iconUrl, '自动获取');
+            }
+            
+        } catch (error) {
+            console.error('Failed to handle URL change:', error);
+        }
+    }
+    
+    // 手动刷新标题
+    async handleRefreshTitle() {
+        const urlInput = document.getElementById('bookmarkUrl');
+        const titleInput = document.getElementById('bookmarkTitle');
+        const url = urlInput?.value.trim();
+        
+        if (!url) {
+            this.showError('请先输入网址');
+            return;
+        }
+        
+        // 验证 URL
+        try {
+            const normalizedUrl = storageManager.normalizeUrl(url);
+            if (!storageManager.isValidUrl(normalizedUrl)) {
+                this.showError('请输入有效的网址');
+                return;
+            }
+            
+            // 显示加载中
+            if (titleInput) {
+                const originalTitle = titleInput.value;
+                titleInput.value = '正在获取标题...';
+                titleInput.disabled = true;
+                
+                // 获取标题
+                const title = await this.fetchTitleFromUrl(normalizedUrl);
+                
+                titleInput.disabled = false;
+                
+                if (title) {
+                    titleInput.value = title;
+                    this.showSuccess('标题获取成功');
+                } else {
+                    titleInput.value = originalTitle;
+                    this.showError('无法获取标题');
+                }
+            }
+            
+        } catch (error) {
+            console.error('Failed to refresh title:', error);
+            if (titleInput) {
+                titleInput.disabled = false;
+            }
+            this.showError('获取标题失败');
+        }
     }
     
     // 显示图标预览

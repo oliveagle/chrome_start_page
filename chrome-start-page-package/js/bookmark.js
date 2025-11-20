@@ -291,19 +291,79 @@ class BookmarkManager {
             return bookmark.icon;
         }
 
-        // 尝试从background service worker获取图标
-        return new Promise((resolve) => {
-            chrome.runtime.sendMessage(
-                { action: 'fetchIcon', url: bookmark.url },
-                (response) => {
-                    if (response && response.success) {
-                        resolve(response.iconUrl);
-                    } else {
-                        resolve(null);
+        try {
+            // 先检查缓存，看是否已经下载过同域名的图标
+            const cachedIcon = await this.getIconFromCache(bookmark.url);
+            if (cachedIcon) {
+                console.log('Using cached icon for:', bookmark.url);
+                return cachedIcon;
+            }
+
+            // 尝试从background service worker获取图标
+            return new Promise((resolve) => {
+                chrome.runtime.sendMessage(
+                    { action: 'fetchIcon', url: bookmark.url },
+                    (response) => {
+                        if (response && response.success) {
+                            resolve(response.iconUrl);
+                        } else {
+                            resolve(null);
+                        }
                     }
+                );
+            });
+        } catch (error) {
+            console.error('Failed to get bookmark icon:', error);
+            return null;
+        }
+    }
+    
+    // 从缓存中获取同域名的图标
+    async getIconFromCache(url) {
+        try {
+            const urlObj = new URL(url);
+            const domain = urlObj.origin;
+            const hostname = urlObj.hostname; // 主域名，如 trip.larkenterprise.com
+            
+            // 查找所有已有图标的书签
+            const allBookmarks = await this.getAllBookmarks();
+            
+            // 策略 1: 完全匹配域名 (origin)
+            let cachedBookmark = allBookmarks.find(b => {
+                if (!b.icon) return false;
+                try {
+                    const bUrlObj = new URL(b.url);
+                    return bUrlObj.origin === domain;
+                } catch (e) {
+                    return false;
                 }
-            );
-        });
+            });
+            
+            // 策略 2: 匹配主域名 (hostname)，处理子域名情况
+            if (!cachedBookmark) {
+                cachedBookmark = allBookmarks.find(b => {
+                    if (!b.icon) return false;
+                    try {
+                        const bUrlObj = new URL(b.url);
+                        // 匹配相同的主域名或父域名
+                        const bHostname = bUrlObj.hostname;
+                        return bHostname === hostname || 
+                               hostname.endsWith('.' + bHostname) || 
+                               bHostname.endsWith('.' + hostname);
+                    } catch (e) {
+                        return false;
+                    }
+                });
+            }
+            
+            if (cachedBookmark) {
+                console.log(`Icon cache hit for ${url}, reusing icon from ${cachedBookmark.url}`);
+            }
+            
+            return cachedBookmark ? cachedBookmark.icon : null;
+        } catch (error) {
+            return null;
+        }
     }
 
     // 获取并更新书签图标

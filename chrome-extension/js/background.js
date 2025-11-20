@@ -54,6 +54,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 });
             return true; // 保持消息通道开放
             
+        case 'fetchPageTitle':
+            // 获取网页标题
+            fetchPageTitle(request.url)
+                .then(title => {
+                    sendResponse({ success: true, title });
+                })
+                .catch(error => {
+                    sendResponse({ success: false, error: error.message });
+                });
+            return true; // 保持消息通道开放
+            
         default:
             sendResponse({ success: false, error: 'Unknown action' });
     }
@@ -100,6 +111,55 @@ async function handleDataMigration(previousVersion) {
         }
     } catch (error) {
         console.error('Data migration failed:', error);
+    }
+}
+
+// 获取网页标题
+async function fetchPageTitle(url) {
+    try {
+        // 验证 URL
+        const urlObj = new URL(url);
+        
+        // 使用 fetch 获取页面内容
+        const response = await fetch(url, {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'omit',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; Chrome Extension)'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const html = await response.text();
+        
+        // 提取 <title> 标签内容
+        const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+        if (titleMatch && titleMatch[1]) {
+            return titleMatch[1].trim();
+        }
+        
+        // 如果没有找到 title，尝试查找 og:title
+        const ogTitleMatch = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']+)["']/i);
+        if (ogTitleMatch && ogTitleMatch[1]) {
+            return ogTitleMatch[1].trim();
+        }
+        
+        // 都没找到，返回域名
+        return urlObj.hostname;
+        
+    } catch (error) {
+        console.error('Failed to fetch page title:', error);
+        // 如果获取失败，返回域名作为后备
+        try {
+            const urlObj = new URL(url);
+            return urlObj.hostname;
+        } catch (e) {
+            throw new Error('Invalid URL: ' + error.message);
+        }
     }
 }
 
