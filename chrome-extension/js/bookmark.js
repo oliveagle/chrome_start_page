@@ -81,11 +81,22 @@ class BookmarkManager {
             }
 
             // 准备书签数据
+            const normalizedUrl = this.storage.normalizeUrl(bookmarkData.url);
+            
+            // 优先使用提供的图标，否则尝试从缓存获取
+            let iconUrl = bookmarkData.icon || null;
+            if (!iconUrl) {
+                iconUrl = await this.getIconFromCache(normalizedUrl);
+                if (iconUrl) {
+                    console.log('Reusing cached icon for new bookmark:', normalizedUrl);
+                }
+            }
+            
             const newBookmark = {
                 title: bookmarkData.title.trim(),
-                url: this.storage.normalizeUrl(bookmarkData.url),
+                url: normalizedUrl,
                 groupId: bookmarkData.groupId,
-                icon: bookmarkData.icon || null,
+                icon: iconUrl,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             };
@@ -96,8 +107,10 @@ class BookmarkManager {
             if (createdBookmark) {
                 console.log('New bookmark created:', createdBookmark);
                 
-                // 尝试获取图标（异步，不阻塞书签创建）
-                this.fetchAndUpdateIcon(createdBookmark.id);
+                // 只有在没有图标时才尝试获取（异步，不阻塞书签创建）
+                if (!createdBookmark.icon) {
+                    this.fetchAndUpdateIcon(createdBookmark.id);
+                }
                 
                 return createdBookmark;
             } else {
@@ -148,6 +161,15 @@ class BookmarkManager {
             // 标准化URL
             if (updates.url) {
                 updates.url = this.storage.normalizeUrl(updates.url);
+                
+                // 如果URL变化且没有提供新图标，尝试从缓存获取
+                if (!updates.icon) {
+                    const cachedIcon = await this.getIconFromCache(updates.url);
+                    if (cachedIcon) {
+                        console.log('Reusing cached icon for updated bookmark:', updates.url);
+                        updates.icon = cachedIcon;
+                    }
+                }
             }
 
             const updatedBookmark = await this.storage.updateBookmark(id, updates);
@@ -155,8 +177,8 @@ class BookmarkManager {
             if (updatedBookmark) {
                 console.log('Bookmark updated:', updatedBookmark);
                 
-                // 如果URL发生变化，尝试获取新图标
-                if (updates.url && updates.url !== bookmark.url) {
+                // 如果URL发生变化且没有图标，尝试获取新图标
+                if (updates.url && updates.url !== bookmark.url && !updatedBookmark.icon) {
                     this.fetchAndUpdateIcon(id);
                 }
                 
@@ -325,15 +347,33 @@ class BookmarkManager {
             const domain = urlObj.origin;
             const hostname = urlObj.hostname; // 主域名，如 trip.larkenterprise.com
             
+            console.log('[Icon Cache] Checking cache for URL:', url);
+            console.log('[Icon Cache] Domain:', domain, 'Hostname:', hostname);
+            
             // 查找所有已有图标的书签
             const allBookmarks = await this.getAllBookmarks();
+            const bookmarksWithIcons = allBookmarks.filter(b => b.icon);
+            
+            console.log('[Icon Cache] Total bookmarks:', allBookmarks.length);
+            console.log('[Icon Cache] Bookmarks with icons:', bookmarksWithIcons.length);
+            
+            if (bookmarksWithIcons.length > 0) {
+                console.log('[Icon Cache] Available icons:', bookmarksWithIcons.map(b => ({
+                    url: b.url,
+                    icon: b.icon
+                })));
+            }
             
             // 策略 1: 完全匹配域名 (origin)
             let cachedBookmark = allBookmarks.find(b => {
                 if (!b.icon) return false;
                 try {
                     const bUrlObj = new URL(b.url);
-                    return bUrlObj.origin === domain;
+                    const match = bUrlObj.origin === domain;
+                    if (match) {
+                        console.log('[Icon Cache] Strategy 1 matched:', b.url, '→', b.icon);
+                    }
+                    return match;
                 } catch (e) {
                     return false;
                 }
@@ -347,9 +387,13 @@ class BookmarkManager {
                         const bUrlObj = new URL(b.url);
                         // 匹配相同的主域名或父域名
                         const bHostname = bUrlObj.hostname;
-                        return bHostname === hostname || 
+                        const match = bHostname === hostname || 
                                hostname.endsWith('.' + bHostname) || 
                                bHostname.endsWith('.' + hostname);
+                        if (match) {
+                            console.log('[Icon Cache] Strategy 2 matched:', b.url, '→', b.icon);
+                        }
+                        return match;
                     } catch (e) {
                         return false;
                     }
@@ -357,11 +401,15 @@ class BookmarkManager {
             }
             
             if (cachedBookmark) {
-                console.log(`Icon cache hit for ${url}, reusing icon from ${cachedBookmark.url}`);
+                console.log(`[Icon Cache] ✅ Cache HIT for ${url}, reusing icon from ${cachedBookmark.url}`);
+                console.log('[Icon Cache] Icon URL:', cachedBookmark.icon);
+            } else {
+                console.log(`[Icon Cache] ❌ Cache MISS for ${url}`);
             }
             
             return cachedBookmark ? cachedBookmark.icon : null;
         } catch (error) {
+            console.error('[Icon Cache] Error:', error);
             return null;
         }
     }

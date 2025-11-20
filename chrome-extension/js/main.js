@@ -927,10 +927,18 @@ class ChromeStartPageApp {
                 }
             }
             
-            // 自动获取图标
-            const iconUrl = await this.fetchIconFromUrl(normalizedUrl);
+            // 先尝试从缓存获取图标
+            let iconUrl = await bookmarkManager.getIconFromCache(normalizedUrl);
             if (iconUrl) {
-                this.showIconPreview(iconUrl, '自动获取');
+                console.log('URL change: Using cached icon for', normalizedUrl);
+                this.showIconPreview(iconUrl, '缓存复用');
+            } else {
+                // 缓存未命中，从服务器获取
+                console.log('URL change: Cache miss, fetching icon for', normalizedUrl);
+                iconUrl = await this.fetchIconFromUrl(normalizedUrl);
+                if (iconUrl) {
+                    this.showIconPreview(iconUrl, '自动获取');
+                }
             }
             
         } catch (error) {
