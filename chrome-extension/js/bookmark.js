@@ -346,9 +346,14 @@ class BookmarkManager {
             const urlObj = new URL(url);
             const domain = urlObj.origin;
             const hostname = urlObj.hostname; // 主域名，如 trip.larkenterprise.com
+            const port = urlObj.port; // 端口号
+            
+            // 对于IP地址，我们需要包含端口信息以区分不同的服务
+            const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+            const cacheKey = isIP && port ? `${hostname}:${port}` : hostname;
             
             console.log('[Icon Cache] Checking cache for URL:', url);
-            console.log('[Icon Cache] Domain:', domain, 'Hostname:', hostname);
+            console.log('[Icon Cache] Domain:', domain, 'Hostname:', hostname, 'Port:', port, 'CacheKey:', cacheKey);
             
             // 查找所有已有图标的书签
             const allBookmarks = await this.getAllBookmarks();
@@ -379,21 +384,33 @@ class BookmarkManager {
                 }
             });
             
-            // 策略 2: 匹配主域名 (hostname)，处理子域名情况
+            // 策略 2: 对于IP地址，匹配IP:端口；对于域名，匹配主域名
             if (!cachedBookmark) {
                 cachedBookmark = allBookmarks.find(b => {
                     if (!b.icon) return false;
                     try {
                         const bUrlObj = new URL(b.url);
-                        // 匹配相同的主域名或父域名
                         const bHostname = bUrlObj.hostname;
-                        const match = bHostname === hostname || 
-                               hostname.endsWith('.' + bHostname) || 
-                               bHostname.endsWith('.' + hostname);
-                        if (match) {
-                            console.log('[Icon Cache] Strategy 2 matched:', b.url, '→', b.icon);
+                        const bPort = bUrlObj.port;
+                        
+                        if (isIP) {
+                            // 对于IP地址，必须匹配IP和端口
+                            const bIsIP = /^\d+\.\d+\.\d+\.\d+$/.test(bHostname);
+                            const match = bIsIP && bHostname === hostname && bPort === port;
+                            if (match) {
+                                console.log('[Icon Cache] Strategy 2 (IP) matched:', b.url, '→', b.icon);
+                            }
+                            return match;
+                        } else {
+                            // 对于域名，匹配相同的主域名或父域名
+                            const match = bHostname === hostname || 
+                                   hostname.endsWith('.' + bHostname) || 
+                                   bHostname.endsWith('.' + hostname);
+                            if (match) {
+                                console.log('[Icon Cache] Strategy 2 (Domain) matched:', b.url, '→', b.icon);
+                            }
+                            return match;
                         }
-                        return match;
                     } catch (e) {
                         return false;
                     }
