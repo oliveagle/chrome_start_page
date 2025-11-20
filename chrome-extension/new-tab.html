@@ -95,6 +95,14 @@
                         </div>
                     </div>
                     <div class="form-group">
+                        <label for="customIconUrl">自定义图标地址（可选）</label>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <input type="url" id="customIconUrl" name="customIconUrl" placeholder="输入图标URL地址" style="flex: 1;">
+                            <button type="button" id="previewCustomIconBtn" class="btn btn-secondary" title="预览">👁️</button>
+                        </div>
+                        <small style="font-size: 11px; color: #718096;">填写后将优先使用自定义图标</small>
+                    </div>
+                    <div class="form-group">
                         <label for="bookmarkGroup">所属分组</label>
                         <select id="bookmarkGroup" name="bookmarkGroup" required>
                             <option value="">请选择分组</option>

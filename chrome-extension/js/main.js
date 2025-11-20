@@ -129,6 +129,12 @@ class ChromeStartPageApp {
         if (refreshIconBtn) {
             refreshIconBtn.addEventListener('click', () => this.handleRefreshIcon());
         }
+        
+        // 预览自定义图标按钮
+        const previewCustomIconBtn = document.getElementById('previewCustomIconBtn');
+        if (previewCustomIconBtn) {
+            previewCustomIconBtn.addEventListener('click', () => this.handlePreviewCustomIcon());
+        }
 
         // 确认模态框
         document.getElementById('confirmAction')?.addEventListener('click', () => this.handleConfirmAction());
@@ -507,8 +513,12 @@ class ChromeStartPageApp {
             document.getElementById('bookmarkUrl').value = bookmark.url;
             document.getElementById('bookmarkGroup').value = bookmark.groupId;
             
-            // 如果有图标，显示预览
+            // 如果有图标，显示预览和填充自定义URL
             if (bookmark.icon) {
+                // 如果图标不是 favicon.ico，认为是自定义图标
+                if (!bookmark.icon.endsWith('/favicon.ico')) {
+                    document.getElementById('customIconUrl').value = bookmark.icon;
+                }
                 this.showIconPreview(bookmark.icon, '当前图标');
             }
         } catch (error) {
@@ -607,10 +617,16 @@ class ChromeStartPageApp {
                 return;
             }
             
-            // 获取图标（如果有预览）
-            const iconPreview = document.getElementById('iconPreview');
-            if (iconPreview && iconPreview.style.display !== 'none' && iconPreview.src) {
-                formData.icon = iconPreview.src;
+            // 优先使用自定义图标URL
+            const customIconUrl = document.getElementById('customIconUrl').value.trim();
+            if (customIconUrl) {
+                formData.icon = customIconUrl;
+            } else {
+                // 如果没有自定义，尝试使用预览的图标
+                const iconPreview = document.getElementById('iconPreview');
+                if (iconPreview && iconPreview.style.display !== 'none' && iconPreview.src) {
+                    formData.icon = iconPreview.src;
+                }
             }
 
             if (this.currentEditingBookmark) {
@@ -785,6 +801,29 @@ class ChromeStartPageApp {
             this.showIconPreview(null, '获取失败');
             this.showError('获取图标失败');
         }
+    }
+    
+    // 预览自定义图标
+    async handlePreviewCustomIcon() {
+        const customIconInput = document.getElementById('customIconUrl');
+        const iconUrl = customIconInput?.value.trim();
+        
+        if (!iconUrl) {
+            this.showError('请先输入图标地址');
+            return;
+        }
+        
+        // 验证 URL
+        try {
+            new URL(iconUrl);
+        } catch (error) {
+            this.showError('请输入有效的图标地址');
+            return;
+        }
+        
+        // 显示预览
+        this.showIconPreview(iconUrl, '自定义图标预览');
+        this.showSuccess('图标预览成功');
     }
     
     // 从 URL 获取图标
