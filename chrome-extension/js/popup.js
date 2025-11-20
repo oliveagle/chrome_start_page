@@ -7,6 +7,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // 加载统计数据
     await loadStats();
+    
+    // 加载设置
+    await loadSettings();
 });
 
 function bindEventListeners() {
@@ -143,4 +146,41 @@ function showMessage(message, type = 'info') {
     setTimeout(() => {
         document.body.removeChild(messageDiv);
     }, 3000);
+}
+
+// 加载设置
+async function loadSettings() {
+    try {
+        const result = await chrome.storage.sync.get(['settings']);
+        const settings = result.settings || {};
+        
+        // 设置同步到Chrome书签的复选框状态
+        const syncCheckbox = document.getElementById('syncToChromeBookmarks');
+        if (syncCheckbox) {
+            syncCheckbox.checked = settings.syncToChromeBookmarks || false;
+            
+            // 绑定事件监听器
+            syncCheckbox.addEventListener('change', async (e) => {
+                console.log('[Popup] Sync checkbox changed to:', e.target.checked);
+                const newSettings = {
+                    ...settings,
+                    syncToChromeBookmarks: e.target.checked
+                };
+                
+                console.log('[Popup] Saving new settings:', newSettings);
+                await chrome.storage.sync.set({ settings: newSettings });
+                console.log('[Popup] Settings saved successfully');
+                
+                // 如果启用了同步，立即执行一次同步
+                if (e.target.checked) {
+                    console.log('[Popup] Triggering bookmark sync');
+                    chrome.runtime.sendMessage({ action: 'syncBookmarksToChrome' });
+                }
+                
+                showMessage(e.target.checked ? '已启用Chrome书签同步' : '已禁用Chrome书签同步');
+            });
+        }
+    } catch (error) {
+        console.error('Failed to load settings:', error);
+    }
 }

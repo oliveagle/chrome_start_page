@@ -137,6 +137,61 @@
         </div>
     </div>
 
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>设置</h3>
+                <button class="modal-close" data-modal="settingsModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="settingsForm">
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="syncToChromeBookmarks">
+                            同步书签到Chrome原生书签管理器
+                        </label>
+                        <small>启用后，所有分组和书签将自动同步到Chrome书签管理器中名为"Chrome Start Page Bookmarks"的文件夹</small>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="autoFetchIcons">
+                            自动获取网站图标
+                        </label>
+                        <small>启用后，添加书签时会自动尝试获取网站的favicon作为图标</small>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="showEmptyGroups">
+                            显示空分组
+                        </label>
+                        <small>启用后，即使分组中没有书签也会显示该分组</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="theme">主题</label>
+                        <select id="theme">
+                            <option value="default">默认</option>
+                            <option value="dark">深色</option>
+                            <option value="light">浅色</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="background">背景</label>
+                        <select id="background">
+                            <option value="gradient">渐变</option>
+                            <option value="solid">纯色</option>
+                            <option value="image">图片</option>
+                        </select>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-cancel" data-modal="settingsModal">取消</button>
+                        <button type="submit" class="btn btn-primary">保存</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="js/storage.js"></script>
     <script src="js/group.js"></script>

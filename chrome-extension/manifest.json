@@ -16,7 +16,8 @@
   },
   "permissions": [
     "storage",
-    "tabs"
+    "tabs",
+    "bookmarks"
   ],
   "host_permissions": [
     "http://*/*",

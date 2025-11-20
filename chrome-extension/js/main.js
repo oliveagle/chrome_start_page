@@ -151,6 +151,15 @@ class ChromeStartPageApp {
 
         // 确认模态框
         document.getElementById('confirmAction')?.addEventListener('click', () => this.handleConfirmAction());
+        
+        // 设置表单
+        const settingsForm = document.getElementById('settingsForm');
+        if (settingsForm) {
+            settingsForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.saveSettings();
+            });
+        }
     }
 
     // ===== 数据初始化 =====
@@ -1096,8 +1105,57 @@ class ChromeStartPageApp {
     }
 
     // 显示设置
-    showSettings() {
-        this.showNotification('设置功能将在后续版本中推出', 'info');
+    async showSettings() {
+        // 显示设置模态框
+        this.showModal('settingsModal');
+        
+        // 加载当前设置到表单
+        await this.loadSettingsIntoForm();
+    }
+
+    // 加载设置到表单
+    async loadSettingsIntoForm() {
+        try {
+            const settings = await storageManager.getSettings();
+            
+            // 填充表单字段
+            document.getElementById('syncToChromeBookmarks').checked = settings.syncToChromeBookmarks || false;
+            document.getElementById('autoFetchIcons').checked = settings.autoFetchIcons !== false; // 默认为true
+            document.getElementById('showEmptyGroups').checked = settings.showEmptyGroups !== false; // 默认为true
+            document.getElementById('theme').value = settings.theme || 'default';
+            document.getElementById('background').value = settings.background || 'gradient';
+        } catch (error) {
+            console.error('Failed to load settings into form:', error);
+        }
+    }
+
+    // 保存设置
+    async saveSettings() {
+        try {
+            const settings = {
+                syncToChromeBookmarks: document.getElementById('syncToChromeBookmarks').checked,
+                autoFetchIcons: document.getElementById('autoFetchIcons').checked,
+                showEmptyGroups: document.getElementById('showEmptyGroups').checked,
+                theme: document.getElementById('theme').value,
+                background: document.getElementById('background').value
+            };
+            
+            await storageManager.saveSettings(settings);
+            
+            // 隐藏模态框
+            this.hideModal('settingsModal');
+            
+            // 显示成功通知
+            this.showNotification('设置已保存', 'success');
+            
+            // 如果启用了书签同步，触发一次同步
+            if (settings.syncToChromeBookmarks) {
+                chrome.runtime.sendMessage({ action: 'syncBookmarksToChrome' });
+            }
+        } catch (error) {
+            console.error('Failed to save settings:', error);
+            this.showNotification('保存设置失败', 'error');
+        }
     }
 }
 

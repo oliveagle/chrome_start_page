@@ -221,7 +221,8 @@ class StorageManager {
             showEmptyGroups: true,
             iconSize: '16px',
             layout: 'grid',
-            autoFetchIcons: true
+            autoFetchIcons: true,
+            syncToChromeBookmarks: false // 默认不启用同步到Chrome书签
         };
     }
 

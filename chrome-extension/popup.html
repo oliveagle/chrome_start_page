@@ -77,6 +77,26 @@
             text-align: center;
             opacity: 0.8;
         }
+        
+        .setting-item {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            text-align: center;
+        }
+        
+        .setting-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        
+        .setting-checkbox {
+            transform: scale(0.8);
+        }
     </style>
 </head>
 <body>
@@ -90,6 +110,12 @@
         <button class="btn btn-secondary" id="addBookmark">快速添加书签</button>
         <button class="btn btn-secondary" id="exportData">导出数据</button>
         <button class="btn btn-secondary" id="importData">导入数据</button>
+        <div class="setting-item">
+            <label class="setting-label">
+                <input type="checkbox" id="syncToChromeBookmarks" class="setting-checkbox">
+                同步到Chrome书签
+            </label>
+        </div>
     </div>
     
     <div class="stats">
