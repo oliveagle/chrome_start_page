@@ -7,7 +7,7 @@ class ChromeStartPageApp {
         this.currentEditingBookmark = null;
         this.isInitialized = false;
         this.renderTimeout = null;
-        
+
         // 等待DOM加载完成后初始化
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => this.init());
@@ -17,29 +17,29 @@ class ChromeStartPageApp {
     }
 
     // ===== 应用初始化 =====
-    
+
     async init() {
         try {
             console.log('Initializing Chrome Start Page App...');
-            
+
             // 等待管理器初始化
             await this.waitForManagers();
-            
+
             // 绑定事件监听器
             this.bindEventListeners();
-            
+
             // 初始化数据
             await this.initializeData();
-            
+
             // 加载并显示数据
             await this.loadAndDisplayData();
-            
+
             // 设置存储变化监听
             this.setupStorageListeners();
-            
+
             this.isInitialized = true;
             console.log('Chrome Start Page App initialized successfully');
-            
+
         } catch (error) {
             console.error('Failed to initialize app:', error);
             this.showError('应用初始化失败，请刷新页面重试');
@@ -61,22 +61,23 @@ class ChromeStartPageApp {
     }
 
     // ===== 事件绑定 =====
-    
+
     bindEventListeners() {
         // 按钮事件
         document.getElementById('addGroupBtn')?.addEventListener('click', () => this.showGroupModal());
         document.getElementById('addBookmarkBtn')?.addEventListener('click', () => this.showBookmarkModal());
         document.getElementById('settingsBtn')?.addEventListener('click', () => this.showSettings());
-        
+        document.getElementById('syncFromChromeBtn')?.addEventListener('click', () => this.syncFromChromeBookmarks());
+
         // 模态框事件
         this.setupModalEvents();
-        
+
         // 表单事件
         this.setupFormEvents();
-        
+
         // 键盘事件
         document.addEventListener('keydown', (e) => this.handleKeyDown(e));
-        
+
         // 窗口事件
         window.addEventListener('resize', () => this.handleResize());
     }
@@ -117,19 +118,19 @@ class ChromeStartPageApp {
         if (bookmarkForm) {
             bookmarkForm.addEventListener('submit', (e) => this.handleBookmarkSubmit(e));
         }
-        
+
         // 刷新图标按钮
         const refreshIconBtn = document.getElementById('refreshIconBtn');
         if (refreshIconBtn) {
             refreshIconBtn.addEventListener('click', () => this.handleRefreshIcon());
         }
-        
+
         // 刷新标题按钮
         const refreshTitleBtn = document.getElementById('refreshTitleBtn');
         if (refreshTitleBtn) {
             refreshTitleBtn.addEventListener('click', () => this.handleRefreshTitle());
         }
-        
+
         // URL 输入框变化时自动获取标题
         const bookmarkUrlInput = document.getElementById('bookmarkUrl');
         if (bookmarkUrlInput) {
@@ -142,7 +143,7 @@ class ChromeStartPageApp {
                 }, 800); // 800ms 防抖
             });
         }
-        
+
         // 预览自定义图标按钮
         const previewCustomIconBtn = document.getElementById('previewCustomIconBtn');
         if (previewCustomIconBtn) {
@@ -151,7 +152,7 @@ class ChromeStartPageApp {
 
         // 确认模态框
         document.getElementById('confirmAction')?.addEventListener('click', () => this.handleConfirmAction());
-        
+
         // 设置表单
         const settingsForm = document.getElementById('settingsForm');
         if (settingsForm) {
@@ -163,20 +164,20 @@ class ChromeStartPageApp {
     }
 
     // ===== 数据初始化 =====
-    
+
     async initializeData() {
         try {
             // 检查是否有初始数据
             const groups = await groupManager.getAllGroups();
             const settings = await storageManager.getSettings();
-            
+
             if (groups.length === 0) {
                 // 创建默认分组
                 await this.createDefaultGroups();
             }
-            
+
             console.log('Data initialized');
-            
+
         } catch (error) {
             console.error('Failed to initialize data:', error);
         }
@@ -185,7 +186,7 @@ class ChromeStartPageApp {
     // 创建默认分组
     async createDefaultGroups() {
         const defaultGroups = ['工作', '学习', '娱乐', '工具'];
-        
+
         for (const groupName of defaultGroups) {
             try {
                 await groupManager.createGroup(groupName);
@@ -193,17 +194,17 @@ class ChromeStartPageApp {
                 console.warn(`Failed to create default group ${groupName}:`, error.message);
             }
         }
-        
+
         console.log('Default groups created');
     }
 
     // ===== 数据加载和显示 =====
-    
+
     async loadAndDisplayData() {
         try {
             await this.renderGroups();
             // renderGroups 内部会调用 updateEmptyState
-            
+
         } catch (error) {
             console.error('Failed to load and display data:', error);
             this.showError('加载数据失败');
@@ -216,7 +217,7 @@ class ChromeStartPageApp {
         if (this.renderTimeout) {
             clearTimeout(this.renderTimeout);
         }
-        
+
         // 延迟渲染，避免重复调用
         this.renderTimeout = setTimeout(async () => {
             const groupsContainer = document.getElementById('groupsGrid');
@@ -233,16 +234,16 @@ class ChromeStartPageApp {
 
                 // 创建文档片段，避免多次重排
                 const fragment = document.createDocumentFragment();
-                
+
                 for (const group of groups) {
                     const groupElement = await this.createGroupElement(group);
                     fragment.appendChild(groupElement);
                 }
-                
+
                 // 一次性替换所有内容，减少闪烁
                 groupsContainer.innerHTML = '';
                 groupsContainer.appendChild(fragment);
-                
+
                 // 渲染完成后更新空状态
                 this.updateEmptyState();
 
@@ -308,12 +309,12 @@ class ChromeStartPageApp {
     // 创建书签元素
     async createBookmarkElement(bookmark) {
         const iconUrl = await this.getBookmarkIconUrl(bookmark);
-        
+
         return `
             <li class="bookmark-item" data-bookmark-id="${bookmark.id}">
                 <div class="bookmark-info" data-action="open-bookmark" data-bookmark-id="${bookmark.id}">
                     <div class="bookmark-icon">
-                        ${iconUrl ? `<img src="${iconUrl}" alt="" onerror="this.style.display='none'">` : '🔗'}
+                        ${iconUrl ? `<img src="${iconUrl}" alt="" class="bookmark-icon-img">` : '🔗'}
                     </div>
                     <span class="bookmark-title">${this.escapeHtml(bookmark.title)}</span>
                 </div>
@@ -352,7 +353,7 @@ class ChromeStartPageApp {
                 e.stopPropagation();
                 const action = e.target.getAttribute('data-action');
                 const groupId = e.target.getAttribute('data-group-id');
-                
+
                 if (action === 'add-bookmark') {
                     this.showBookmarkModal(groupId);
                 } else {
@@ -388,10 +389,18 @@ class ChromeStartPageApp {
                 this.handleBookmarkAction(action, bookmarkId);
             });
         });
+
+        // 图标加载错误处理
+        const iconImg = bookmarkElement.querySelector('.bookmark-icon-img');
+        if (iconImg) {
+            iconImg.addEventListener('error', (e) => {
+                e.target.style.display = 'none';
+            });
+        }
     }
 
     // ===== 事件处理方法 =====
-    
+
     // 处理组操作
     async handleGroupAction(action, groupId) {
         try {
@@ -434,7 +443,7 @@ class ChromeStartPageApp {
     }
 
     // ===== 模态框显示/隐藏 =====
-    
+
     // 显示组模态框
     showGroupModal(groupId = null) {
         const modal = document.getElementById('groupModal');
@@ -474,10 +483,10 @@ class ChromeStartPageApp {
         if (!modal || !title || !form || !groupSelect) return;
 
         this.currentEditingBookmark = bookmarkId;
-        
+
         // 隐藏图标预览
         this.hideIconPreview();
-        
+
         // 先加载分组选项
         await this.loadGroupOptions();
 
@@ -508,7 +517,7 @@ class ChromeStartPageApp {
             const currentValue = groupSelect.value;
 
             groupSelect.innerHTML = '<option value="">请选择分组</option>';
-            
+
             groups.forEach(group => {
                 const option = document.createElement('option');
                 option.value = group.id;
@@ -534,7 +543,7 @@ class ChromeStartPageApp {
             document.getElementById('bookmarkTitle').value = bookmark.title;
             document.getElementById('bookmarkUrl').value = bookmark.url;
             document.getElementById('bookmarkGroup').value = bookmark.groupId;
-            
+
             // 如果有图标，显示预览和填充自定义URL
             if (bookmark.icon) {
                 // 如果图标不是 favicon.ico，认为是自定义图标
@@ -584,20 +593,20 @@ class ChromeStartPageApp {
             modal.style.display = 'none';
         });
         document.body.style.overflow = 'auto';
-        
+
         this.currentEditingGroup = null;
         this.currentEditingBookmark = null;
     }
 
     // ===== 表单处理 =====
-    
+
     // 处理组表单提交
     async handleGroupSubmit(e) {
         e.preventDefault();
 
         try {
             const name = document.getElementById('groupName').value.trim();
-            
+
             if (!name) {
                 this.showError('请输入分组名称');
                 return;
@@ -638,7 +647,7 @@ class ChromeStartPageApp {
                 this.showError('请填写完整信息');
                 return;
             }
-            
+
             // 优先使用自定义图标URL
             const customIconUrl = document.getElementById('customIconUrl').value.trim();
             if (customIconUrl) {
@@ -671,7 +680,7 @@ class ChromeStartPageApp {
     }
 
     // ===== 确认对话框 =====
-    
+
     // 确认删除组
     async confirmDeleteGroup(groupId) {
         try {
@@ -679,7 +688,7 @@ class ChromeStartPageApp {
             if (!group) return;
 
             const bookmarkCount = await groupManager.getGroupBookmarkCount(groupId);
-            
+
             const confirmModal = document.getElementById('confirmModal');
             const confirmTitle = document.getElementById('confirmTitle');
             const confirmMessage = document.getElementById('confirmMessage');
@@ -688,7 +697,7 @@ class ChromeStartPageApp {
             if (!confirmModal || !confirmTitle || !confirmMessage || !confirmAction) return;
 
             confirmTitle.textContent = '删除分组';
-            confirmMessage.textContent = bookmarkCount > 0 
+            confirmMessage.textContent = bookmarkCount > 0
                 ? `确定要删除分组"${group.name}"吗？这将同时删除其中的 ${bookmarkCount} 个书签。`
                 : `确定要删除分组"${group.name}"吗？`;
 
@@ -754,16 +763,16 @@ class ChromeStartPageApp {
     }
 
     // ===== 状态更新 =====
-    
+
     // 更新空状态显示
     updateEmptyState() {
         const emptyState = document.getElementById('emptyState');
         const groupsGrid = document.getElementById('groupsGrid');
-        
+
         if (!emptyState || !groupsGrid) return;
 
         const hasGroups = groupsGrid.children.length > 0;
-        
+
         if (hasGroups) {
             emptyState.style.display = 'none';
         } else {
@@ -775,7 +784,7 @@ class ChromeStartPageApp {
     setupStorageListeners() {
         storageManager.onStorageChange((changes) => {
             console.log('Storage changed:', changes);
-            
+
             // 如果数据发生变化，重新渲染（使用防抖）
             if (changes.groups || changes.bookmarks) {
                 this.renderGroups();
@@ -785,17 +794,17 @@ class ChromeStartPageApp {
     }
 
     // ===== 工具方法 =====
-    
+
     // 刷新图标
     async handleRefreshIcon() {
         const urlInput = document.getElementById('bookmarkUrl');
         const url = urlInput?.value.trim();
-        
+
         if (!url) {
             this.showError('请先输入网址');
             return;
         }
-        
+
         // 验证 URL
         try {
             const normalizedUrl = storageManager.normalizeUrl(url);
@@ -803,13 +812,13 @@ class ChromeStartPageApp {
                 this.showError('请输入有效的网址');
                 return;
             }
-            
+
             // 显示加载中
             this.showIconPreview(null, '正在获取图标...');
-            
+
             // 获取图标
             const iconUrl = await this.fetchIconFromUrl(normalizedUrl);
-            
+
             if (iconUrl) {
                 this.showIconPreview(iconUrl, '图标获取成功');
                 this.showSuccess('图标获取成功');
@@ -817,24 +826,24 @@ class ChromeStartPageApp {
                 this.showIconPreview(null, '未找到图标');
                 this.showError('无法获取图标，将使用默认图标');
             }
-            
+
         } catch (error) {
             console.error('Failed to refresh icon:', error);
             this.showIconPreview(null, '获取失败');
             this.showError('获取图标失败');
         }
     }
-    
+
     // 预览自定义图标
     async handlePreviewCustomIcon() {
         const customIconInput = document.getElementById('customIconUrl');
         const iconUrl = customIconInput?.value.trim();
-        
+
         if (!iconUrl) {
             this.showError('请先输入图标地址');
             return;
         }
-        
+
         // 验证 URL
         try {
             new URL(iconUrl);
@@ -842,12 +851,12 @@ class ChromeStartPageApp {
             this.showError('请输入有效的图标地址');
             return;
         }
-        
+
         // 显示预览
         this.showIconPreview(iconUrl, '自定义图标预览');
         this.showSuccess('图标预览成功');
     }
-    
+
     // 从 URL 获取图标
     async fetchIconFromUrl(url) {
         return new Promise((resolve) => {
@@ -881,7 +890,7 @@ class ChromeStartPageApp {
             }
         });
     }
-    
+
     // 从 URL 获取页面标题
     async fetchTitleFromUrl(url) {
         return new Promise((resolve) => {
@@ -913,19 +922,19 @@ class ChromeStartPageApp {
             }
         });
     }
-    
+
     // 处理 URL 输入框变化
     async handleUrlChange(url) {
         const trimmedUrl = url.trim();
         if (!trimmedUrl) return;
-        
+
         // 验证 URL
         try {
             const normalizedUrl = storageManager.normalizeUrl(trimmedUrl);
             if (!storageManager.isValidUrl(normalizedUrl)) {
                 return; // URL 无效，不做处理
             }
-            
+
             // 自动获取标题
             const titleInput = document.getElementById('bookmarkTitle');
             if (titleInput && !titleInput.value.trim()) {
@@ -935,7 +944,7 @@ class ChromeStartPageApp {
                     titleInput.value = title;
                 }
             }
-            
+
             // 先尝试从缓存获取图标
             let iconUrl = await bookmarkManager.getIconFromCache(normalizedUrl);
             if (iconUrl) {
@@ -949,23 +958,23 @@ class ChromeStartPageApp {
                     this.showIconPreview(iconUrl, '自动获取');
                 }
             }
-            
+
         } catch (error) {
             console.error('Failed to handle URL change:', error);
         }
     }
-    
+
     // 手动刷新标题
     async handleRefreshTitle() {
         const urlInput = document.getElementById('bookmarkUrl');
         const titleInput = document.getElementById('bookmarkTitle');
         const url = urlInput?.value.trim();
-        
+
         if (!url) {
             this.showError('请先输入网址');
             return;
         }
-        
+
         // 验证 URL
         try {
             const normalizedUrl = storageManager.normalizeUrl(url);
@@ -973,18 +982,18 @@ class ChromeStartPageApp {
                 this.showError('请输入有效的网址');
                 return;
             }
-            
+
             // 显示加载中
             if (titleInput) {
                 const originalTitle = titleInput.value;
                 titleInput.value = '正在获取标题...';
                 titleInput.disabled = true;
-                
+
                 // 获取标题
                 const title = await this.fetchTitleFromUrl(normalizedUrl);
-                
+
                 titleInput.disabled = false;
-                
+
                 if (title) {
                     titleInput.value = title;
                     this.showSuccess('标题获取成功');
@@ -993,7 +1002,7 @@ class ChromeStartPageApp {
                     this.showError('无法获取标题');
                 }
             }
-            
+
         } catch (error) {
             console.error('Failed to refresh title:', error);
             if (titleInput) {
@@ -1002,27 +1011,27 @@ class ChromeStartPageApp {
             this.showError('获取标题失败');
         }
     }
-    
+
     // 显示图标预览
     showIconPreview(iconUrl, status) {
         const previewGroup = document.getElementById('iconPreviewGroup');
         const previewImg = document.getElementById('iconPreview');
         const statusText = document.getElementById('iconStatus');
-        
+
         if (!previewGroup || !previewImg || !statusText) return;
-        
+
         previewGroup.style.display = 'block';
-        
+
         if (iconUrl) {
             previewImg.src = iconUrl;
             previewImg.style.display = 'block';
         } else {
             previewImg.style.display = 'none';
         }
-        
+
         statusText.textContent = status || '';
     }
-    
+
     // 隐藏图标预览
     hideIconPreview() {
         const previewGroup = document.getElementById('iconPreviewGroup');
@@ -1030,7 +1039,7 @@ class ChromeStartPageApp {
             previewGroup.style.display = 'none';
         }
     }
-    
+
     // HTML转义
     escapeHtml(text) {
         const div = document.createElement('div');
@@ -1094,7 +1103,7 @@ class ChromeStartPageApp {
                 }
             }
         }
-        
+
         // ESC 键关闭模态框已经在 setupModalEvents 中处理
     }
 
@@ -1108,7 +1117,7 @@ class ChromeStartPageApp {
     async showSettings() {
         // 显示设置模态框
         this.showModal('settingsModal');
-        
+
         // 加载当前设置到表单
         await this.loadSettingsIntoForm();
     }
@@ -1117,7 +1126,7 @@ class ChromeStartPageApp {
     async loadSettingsIntoForm() {
         try {
             const settings = await storageManager.getSettings();
-            
+
             // 填充表单字段
             document.getElementById('syncToChromeBookmarks').checked = settings.syncToChromeBookmarks || false;
             document.getElementById('autoFetchIcons').checked = settings.autoFetchIcons !== false; // 默认为true
@@ -1139,15 +1148,15 @@ class ChromeStartPageApp {
                 theme: document.getElementById('theme').value,
                 background: document.getElementById('background').value
             };
-            
+
             await storageManager.saveSettings(settings);
-            
+
             // 隐藏模态框
             this.hideModal('settingsModal');
-            
+
             // 显示成功通知
             this.showNotification('设置已保存', 'success');
-            
+
             // 如果启用了书签同步，触发一次同步
             if (settings.syncToChromeBookmarks) {
                 chrome.runtime.sendMessage({ action: 'syncBookmarksToChrome' });
@@ -1155,6 +1164,30 @@ class ChromeStartPageApp {
         } catch (error) {
             console.error('Failed to save settings:', error);
             this.showNotification('保存设置失败', 'error');
+        }
+    }
+
+    // 从 Chrome 书签同步
+    async syncFromChromeBookmarks() {
+        try {
+            this.showNotification('正在从Chrome书签同步...', 'info');
+
+            // 调用 background script 的同步功能
+            chrome.runtime.sendMessage(
+                { action: 'syncBookmarksFromChrome' },
+                async (response) => {
+                    if (response && response.success) {
+                        this.showSuccess('同步成功！');
+                        // 重新加载数据
+                        await this.renderGroups();
+                    } else {
+                        this.showError('同步失败: ' + (response?.error || '未知错误'));
+                    }
+                }
+            );
+        } catch (error) {
+            console.error('Failed to sync from Chrome bookmarks:', error);
+            this.showError('同步失败: ' + error.message);
         }
     }
 }

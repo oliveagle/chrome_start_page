@@ -16,7 +16,7 @@ class BookmarkManager {
     }
 
     // ===== 获取书签相关方法 =====
-    
+
     // 获取所有书签
     async getAllBookmarks() {
         return await this.storage.getBookmarks();
@@ -37,19 +37,19 @@ class BookmarkManager {
     async searchBookmarks(query) {
         const bookmarks = await this.getAllBookmarks();
         const searchTerm = query.toLowerCase().trim();
-        
+
         if (!searchTerm) {
             return bookmarks;
         }
 
-        return bookmarks.filter(bookmark => 
+        return bookmarks.filter(bookmark =>
             bookmark.title.toLowerCase().includes(searchTerm) ||
             bookmark.url.toLowerCase().includes(searchTerm)
         );
     }
 
     // ===== 创建书签相关方法 =====
-    
+
     // 创建新书签
     async createBookmark(bookmarkData) {
         try {
@@ -72,7 +72,7 @@ class BookmarkManager {
 
             // 检查重复的书签（同一组中不允许重复URL）
             const existingBookmarks = await this.getBookmarksByGroup(bookmarkData.groupId);
-            const isDuplicate = existingBookmarks.some(bookmark => 
+            const isDuplicate = existingBookmarks.some(bookmark =>
                 bookmark.url.toLowerCase() === this.storage.normalizeUrl(bookmarkData.url).toLowerCase()
             );
 
@@ -82,16 +82,23 @@ class BookmarkManager {
 
             // 准备书签数据
             const normalizedUrl = this.storage.normalizeUrl(bookmarkData.url);
-            
+
             // 优先使用提供的图标，否则尝试从缓存获取
             let iconUrl = bookmarkData.icon || null;
+
+            // 验证图标不是 data URL
+            if (iconUrl && iconUrl.startsWith('data:')) {
+                console.warn('[Bookmark] Rejecting data URL icon to prevent storage quota issues');
+                iconUrl = null; // 不使用 base64 图标
+            }
+
             if (!iconUrl) {
                 iconUrl = await this.getIconFromCache(normalizedUrl);
                 if (iconUrl) {
                     console.log('Reusing cached icon for new bookmark:', normalizedUrl);
                 }
             }
-            
+
             const newBookmark = {
                 title: bookmarkData.title.trim(),
                 url: normalizedUrl,
@@ -103,15 +110,15 @@ class BookmarkManager {
 
             // 创建书签
             const createdBookmark = await this.storage.addBookmark(newBookmark);
-            
+
             if (createdBookmark) {
                 console.log('New bookmark created:', createdBookmark);
-                
+
                 // 只有在没有图标时才尝试获取（异步，不阻塞书签创建）
                 if (!createdBookmark.icon) {
                     this.fetchAndUpdateIcon(createdBookmark.id);
                 }
-                
+
                 return createdBookmark;
             } else {
                 throw new Error('创建书签失败');
@@ -124,7 +131,7 @@ class BookmarkManager {
     }
 
     // ===== 更新书签相关方法 =====
-    
+
     // 更新书签
     async updateBookmark(id, updates) {
         try {
@@ -140,7 +147,7 @@ class BookmarkManager {
                     url: updates.url !== undefined ? updates.url : bookmark.url,
                     groupId: bookmark.groupId
                 });
-                
+
                 if (!validation.valid) {
                     throw new Error(validation.message);
                 }
@@ -149,7 +156,7 @@ class BookmarkManager {
             // 如果URL发生变化，检查重复
             if (updates.url && updates.url !== bookmark.url) {
                 const existingBookmarks = await this.getBookmarksByGroup(bookmark.groupId);
-                const isDuplicate = existingBookmarks.some(b => 
+                const isDuplicate = existingBookmarks.some(b =>
                     b.id !== id && b.url.toLowerCase() === this.storage.normalizeUrl(updates.url).toLowerCase()
                 );
 
@@ -161,7 +168,7 @@ class BookmarkManager {
             // 标准化URL
             if (updates.url) {
                 updates.url = this.storage.normalizeUrl(updates.url);
-                
+
                 // 如果URL变化且没有提供新图标，尝试从缓存获取
                 if (!updates.icon) {
                     const cachedIcon = await this.getIconFromCache(updates.url);
@@ -173,15 +180,15 @@ class BookmarkManager {
             }
 
             const updatedBookmark = await this.storage.updateBookmark(id, updates);
-            
+
             if (updatedBookmark) {
                 console.log('Bookmark updated:', updatedBookmark);
-                
+
                 // 如果URL发生变化且没有图标，尝试获取新图标
                 if (updates.url && updates.url !== bookmark.url && !updatedBookmark.icon) {
                     this.fetchAndUpdateIcon(id);
                 }
-                
+
                 return updatedBookmark;
             } else {
                 throw new Error('更新书签失败');
@@ -194,7 +201,7 @@ class BookmarkManager {
     }
 
     // ===== 删除书签相关方法 =====
-    
+
     // 删除书签
     async deleteBookmark(id) {
         try {
@@ -204,7 +211,7 @@ class BookmarkManager {
             }
 
             const success = await this.storage.deleteBookmark(id);
-            
+
             if (success) {
                 console.log('Bookmark deleted:', id);
                 return true;
@@ -222,16 +229,16 @@ class BookmarkManager {
     async deleteMultipleBookmarks(bookmarkIds) {
         try {
             const results = [];
-            
+
             for (const bookmarkId of bookmarkIds) {
                 try {
                     await this.deleteBookmark(bookmarkId);
                     results.push({ bookmarkId, success: true });
                 } catch (error) {
-                    results.push({ 
-                        bookmarkId, 
-                        success: false, 
-                        error: error.message 
+                    results.push({
+                        bookmarkId,
+                        success: false,
+                        error: error.message
                     });
                 }
             }
@@ -246,7 +253,7 @@ class BookmarkManager {
     }
 
     // ===== 书签操作方法 =====
-    
+
     // 打开书签
     async openBookmark(id) {
         try {
@@ -306,7 +313,7 @@ class BookmarkManager {
     }
 
     // ===== 图标相关方法 =====
-    
+
     // 获取书签图标
     async getBookmarkIcon(bookmark) {
         if (bookmark.icon) {
@@ -339,7 +346,7 @@ class BookmarkManager {
             return null;
         }
     }
-    
+
     // 从缓存中获取同域名的图标
     async getIconFromCache(url) {
         try {
@@ -347,28 +354,28 @@ class BookmarkManager {
             const domain = urlObj.origin;
             const hostname = urlObj.hostname; // 主域名，如 trip.larkenterprise.com
             const port = urlObj.port; // 端口号
-            
+
             // 对于IP地址，我们需要包含端口信息以区分不同的服务
             const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
             const cacheKey = isIP && port ? `${hostname}:${port}` : hostname;
-            
+
             console.log('[Icon Cache] Checking cache for URL:', url);
             console.log('[Icon Cache] Domain:', domain, 'Hostname:', hostname, 'Port:', port, 'CacheKey:', cacheKey);
-            
+
             // 查找所有已有图标的书签
             const allBookmarks = await this.getAllBookmarks();
             const bookmarksWithIcons = allBookmarks.filter(b => b.icon);
-            
+
             console.log('[Icon Cache] Total bookmarks:', allBookmarks.length);
             console.log('[Icon Cache] Bookmarks with icons:', bookmarksWithIcons.length);
-            
+
             if (bookmarksWithIcons.length > 0) {
                 console.log('[Icon Cache] Available icons:', bookmarksWithIcons.map(b => ({
                     url: b.url,
                     icon: b.icon
                 })));
             }
-            
+
             // 策略 1: 完全匹配域名 (origin)
             let cachedBookmark = allBookmarks.find(b => {
                 if (!b.icon) return false;
@@ -383,7 +390,7 @@ class BookmarkManager {
                     return false;
                 }
             });
-            
+
             // 策略 2: 对于IP地址，匹配IP:端口；对于域名，匹配主域名
             if (!cachedBookmark) {
                 cachedBookmark = allBookmarks.find(b => {
@@ -392,7 +399,7 @@ class BookmarkManager {
                         const bUrlObj = new URL(b.url);
                         const bHostname = bUrlObj.hostname;
                         const bPort = bUrlObj.port;
-                        
+
                         if (isIP) {
                             // 对于IP地址，必须匹配IP和端口
                             const bIsIP = /^\d+\.\d+\.\d+\.\d+$/.test(bHostname);
@@ -403,9 +410,9 @@ class BookmarkManager {
                             return match;
                         } else {
                             // 对于域名，匹配相同的主域名或父域名
-                            const match = bHostname === hostname || 
-                                   hostname.endsWith('.' + bHostname) || 
-                                   bHostname.endsWith('.' + hostname);
+                            const match = bHostname === hostname ||
+                                hostname.endsWith('.' + bHostname) ||
+                                bHostname.endsWith('.' + hostname);
                             if (match) {
                                 console.log('[Icon Cache] Strategy 2 (Domain) matched:', b.url, '→', b.icon);
                             }
@@ -416,14 +423,14 @@ class BookmarkManager {
                     }
                 });
             }
-            
+
             if (cachedBookmark) {
                 console.log(`[Icon Cache] ✅ Cache HIT for ${url}, reusing icon from ${cachedBookmark.url}`);
                 console.log('[Icon Cache] Icon URL:', cachedBookmark.icon);
             } else {
                 console.log(`[Icon Cache] ❌ Cache MISS for ${url}`);
             }
-            
+
             return cachedBookmark ? cachedBookmark.icon : null;
         } catch (error) {
             console.error('[Icon Cache] Error:', error);
@@ -460,7 +467,7 @@ class BookmarkManager {
     }
 
     // ===== 数据验证方法 =====
-    
+
     // 验证书签数据
     validateBookmarkData(data) {
         // 验证标题
@@ -496,7 +503,7 @@ class BookmarkManager {
     }
 
     // ===== 统计数据方法 =====
-    
+
     // 获取书签统计信息
     async getBookmarkStats(bookmarkId) {
         try {
@@ -506,8 +513,8 @@ class BookmarkManager {
             }
 
             const groupManager = this.getGroupManager();
-            const groupName = groupManager ? 
-                (await groupManager.getGroup(bookmark.groupId))?.name || 'Unknown' : 
+            const groupName = groupManager ?
+                (await groupManager.getGroup(bookmark.groupId))?.name || 'Unknown' :
                 'Unknown';
 
             return {
@@ -546,14 +553,14 @@ class BookmarkManager {
     }
 
     // ===== 排序和过滤方法 =====
-    
+
     // 排序书签
     async getBookmarksSorted(sortBy = 'title', order = 'asc') {
         const bookmarks = await this.getAllBookmarks();
-        
+
         const sortedBookmarks = bookmarks.sort((a, b) => {
             let valueA, valueB;
-            
+
             switch (sortBy) {
                 case 'title':
                     valueA = a.title.toLowerCase();
@@ -575,7 +582,7 @@ class BookmarkManager {
                     valueA = a.title.toLowerCase();
                     valueB = b.title.toLowerCase();
             }
-            
+
             if (order === 'desc') {
                 return valueA < valueB ? 1 : -1;
             } else {
@@ -587,7 +594,7 @@ class BookmarkManager {
     }
 
     // ===== 导出导入方法 =====
-    
+
     // 导出书签数据
     async exportBookmarks(bookmarkIds = null) {
         try {
@@ -623,19 +630,19 @@ function createBookmarkManager() {
         console.error('StorageManager not available');
         return null;
     }
-    
+
     const bookmarkManager = new BookmarkManager();
-    
+
     // 将管理器暴露到window对象
     if (typeof window !== 'undefined') {
         window.bookmarkManager = bookmarkManager;
     }
-    
+
     // 导出管理器供模块使用
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = { bookmarkManager };
     }
-    
+
     return bookmarkManager;
 }
 
