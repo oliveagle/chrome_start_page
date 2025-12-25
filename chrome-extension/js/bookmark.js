@@ -255,17 +255,23 @@ class BookmarkManager {
     // ===== 书签操作方法 =====
 
     // 打开书签
-    async openBookmark(id) {
+    async openBookmark(id, background = false) {
         try {
             const bookmark = await this.getBookmark(id);
             if (!bookmark) {
                 throw new Error('书签不存在');
             }
 
-            // 在当前标签页打开
             if (chrome.tabs) {
-                chrome.tabs.create({ url: bookmark.url, active: true });
-                console.log('Opening bookmark:', bookmark.url);
+                if (background) {
+                    // 在后台标签页打开
+                    chrome.tabs.create({ url: bookmark.url, active: false });
+                    console.log('Opening bookmark in background:', bookmark.url);
+                } else {
+                    // 在当前标签页打开
+                    chrome.tabs.create({ url: bookmark.url, active: true });
+                    console.log('Opening bookmark:', bookmark.url);
+                }
             } else {
                 // 备用方法：在新窗口中打开
                 window.open(bookmark.url, '_blank');

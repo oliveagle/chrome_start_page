@@ -377,7 +377,17 @@ class ChromeStartPageApp {
         if (bookmarkInfo) {
             bookmarkInfo.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.handleBookmarkAction('open-bookmark', bookmarkId);
+
+                // 检测 CMD 键（Mac）或 Ctrl 键（Windows/Linux）
+                const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+
+                if (isCmdOrCtrl) {
+                    // CMD+点击：在后台新窗口打开
+                    this.openBookmarkInBackground(bookmarkId);
+                } else {
+                    // 普通点击：正常打开
+                    this.handleBookmarkAction('open-bookmark', bookmarkId);
+                }
             });
         }
 
@@ -439,6 +449,83 @@ class ChromeStartPageApp {
         } catch (error) {
             console.error('Bookmark action failed:', error);
             this.showError(error.message);
+        }
+    }
+
+    // 在后台新窗口打开书签
+    async openBookmarkInBackground(bookmarkId) {
+        try {
+            const bookmark = await bookmarkManager.getBookmark(bookmarkId);
+            if (!bookmark) {
+                throw new Error('书签不存在');
+            }
+
+            // 检查是否是邮件链接
+            const isEmail = this.isEmailBookmark(bookmark.url);
+
+            if (isEmail) {
+                // 邮件链接：使用 background script 在后台窗口打开
+                chrome.runtime.sendMessage({
+                    action: 'openEmailInBackground',
+                    url: bookmark.url
+                }, (response) => {
+                    if (response && response.success) {
+                        console.log('邮件已在后台窗口打开:', bookmark.url);
+                    } else {
+                        // 如果失败，使用普通方式打开
+                        console.warn('无法在后台打开邮件，使用普通方式打开');
+                        bookmarkManager.openBookmark(bookmarkId);
+                    }
+                });
+            } else {
+                // 非邮件链接：直接在后台标签页打开
+                await bookmarkManager.openBookmark(bookmarkId, true);
+            }
+
+        } catch (error) {
+            console.error('Failed to open bookmark in background:', error);
+            this.showError('后台打开失败: ' + error.message);
+        }
+    }
+
+    // 检查是否为邮件书签
+    isEmailBookmark(url) {
+        if (!url) return false;
+
+        try {
+            const urlObj = new URL(url);
+
+            // 检查 mailto 协议
+            if (urlObj.protocol === 'mailto:') {
+                return true;
+            }
+
+            // 常见邮件服务域名
+            const emailDomains = [
+                'gmail.com', 'outlook.com', 'hotmail.com', 'yahoo.com',
+                'protonmail.com', 'mail.qq.com', '163.com', '126.com',
+                'sina.com', 'foxmail.com'
+            ];
+
+            const hostname = urlObj.hostname.toLowerCase();
+
+            // 检查域名匹配
+            for (const domain of emailDomains) {
+                if (hostname.includes(domain)) {
+                    return true;
+                }
+            }
+
+            // 检查路径或参数中的邮件关键词
+            const path = urlObj.pathname.toLowerCase();
+            const search = urlObj.search.toLowerCase();
+
+            return path.includes('mail') || path.includes('message') ||
+                   search.includes('mail') || search.includes('email');
+
+        } catch (error) {
+            console.error('Error parsing URL for email check:', error);
+            return false;
         }
     }
 

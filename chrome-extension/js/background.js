@@ -473,3 +473,123 @@ chrome.runtime.onSuspend.addListener(() => {
 chrome.runtime.onSuspendCanceled.addListener(() => {
     console.log('Background service worker suspend canceled');
 });
+
+// ===== 邮件书签后台窗口打开功能 =====
+
+// 创建上下文菜单
+function createContextMenu() {
+    // 移除已存在的菜单，避免重复
+    chrome.contextMenus.removeAll(() => {
+        // 为邮件书签添加上下文菜单项
+        chrome.contextMenus.create({
+            id: 'openEmailInBackground',
+            title: '在后台新窗口打开邮件',
+            contexts: ['link'], // 只在链接上显示
+            documentUrlPatterns: ['chrome-extension://*/new-tab.html'] // 只在扩展的新标签页中显示
+        });
+
+        console.log('Context menu created for email bookmarks');
+    });
+}
+
+// 监听上下文菜单点击事件
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+    if (info.menuItemId === 'openEmailInBackground') {
+        const url = info.linkUrl;
+
+        // 检查是否是邮件链接
+        if (isEmailUrl(url)) {
+            // 在后台窗口中打开（不激活新窗口）
+            chrome.windows.create({
+                url: url,
+                focused: false, // 不聚焦，保持在后台
+                type: 'normal'
+            });
+            console.log('Opened email in background window:', url);
+        }
+    }
+});
+
+// 检查URL是否为邮件相关链接
+function isEmailUrl(url) {
+    if (!url) return false;
+
+    try {
+        const urlObj = new URL(url);
+
+        // 检查协议是否为 mailto
+        if (urlObj.protocol === 'mailto:') {
+            return true;
+        }
+
+        // 检查常见邮件服务域名
+        const emailDomains = [
+            'gmail.com',
+            'outlook.com',
+            'hotmail.com',
+            'yahoo.com',
+            'protonmail.com',
+            'mail.qq.com',
+            '163.com',
+            '126.com',
+            'sina.com',
+            'foxmail.com'
+        ];
+
+        const hostname = urlObj.hostname.toLowerCase();
+
+        // 检查域名是否匹配
+        for (const domain of emailDomains) {
+            if (hostname.includes(domain)) {
+                return true;
+            }
+        }
+
+        // 检查是否包含邮件相关路径或参数
+        const path = urlObj.pathname.toLowerCase();
+        const search = urlObj.search.toLowerCase();
+
+        if (path.includes('mail') ||
+            path.includes('message') ||
+            search.includes('mail') ||
+            search.includes('email')) {
+            return true;
+        }
+
+        return false;
+
+    } catch (error) {
+        console.error('Error parsing URL:', error);
+        return false;
+    }
+}
+
+// 监听来自内容脚本的消息，处理CMD+点击
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'openEmailInBackground') {
+        const url = request.url;
+
+        if (isEmailUrl(url)) {
+            // 在后台窗口中打开
+            chrome.windows.create({
+                url: url,
+                focused: false,
+                type: 'normal'
+            });
+            sendResponse({ success: true });
+        } else {
+            sendResponse({ success: false, error: 'Not an email URL' });
+        }
+
+        return true;
+    }
+});
+
+// 扩展安装或启动时创建上下文菜单
+chrome.runtime.onInstalled.addListener((details) => {
+    createContextMenu();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+    createContextMenu();
+});
