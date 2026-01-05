@@ -373,8 +373,8 @@ async function syncBookmarksFromChrome() {
         await chrome.storage.local.set({ bookmarks: currentBookmarks });
 
         console.log('[Reverse Sync] Synced from Chrome successfully');
-        console.log('[Reverse Sync] Groups:', newGroups.length);
-        console.log('[Reverse Sync] Bookmarks:', newBookmarks.length);
+        console.log('[Reverse Sync] Groups:', currentGroups.length);
+        console.log('[Reverse Sync] Bookmarks:', currentBookmarks.length);
 
     } catch (error) {
         console.error('[Reverse Sync] Failed to sync from Chrome:', error);
