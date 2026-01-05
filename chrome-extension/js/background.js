@@ -320,10 +320,11 @@ async function syncBookmarksFromChrome() {
         let currentGroups = syncResult.groups || [];
         let currentBookmarks = localResult.bookmarks || [];
 
-        const newGroups = [];
-        const newBookmarks = [];
+        // 用于追踪已处理的分组和书签ID
+        const processedGroupIds = new Set();
+        const processedBookmarkUrls = new Set();
 
-        // 处理分组和书签
+        // 处理分组和书签（增量更新，不删除现有数据）
         for (const chromeGroup of chromeGroups) {
             // 查找或创建分组
             let group = currentGroups.find(g => g.name === chromeGroup.title);
@@ -334,14 +335,17 @@ async function syncBookmarksFromChrome() {
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString()
                 };
+                currentGroups.push(group);
             }
-            newGroups.push(group);
+            processedGroupIds.add(group.id);
 
             // 处理分组下的书签
             if (chromeGroup.children) {
                 for (const chromeBookmark of chromeGroup.children) {
                     if (chromeBookmark.url) { // 只处理书签，忽略子文件夹
+                        const bookmarkKey = `${chromeBookmark.url}_${group.id}`;
                         let bookmark = currentBookmarks.find(b => b.url === chromeBookmark.url && b.groupId === group.id);
+
                         if (!bookmark) {
                             bookmark = {
                                 id: 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
@@ -352,20 +356,21 @@ async function syncBookmarksFromChrome() {
                                 createdAt: new Date().toISOString(),
                                 updatedAt: new Date().toISOString()
                             };
+                            currentBookmarks.push(bookmark);
                         } else {
                             // 更新标题
                             bookmark.title = chromeBookmark.title;
                             bookmark.updatedAt = new Date().toISOString();
                         }
-                        newBookmarks.push(bookmark);
+                        processedBookmarkUrls.add(bookmarkKey);
                     }
                 }
             }
         }
 
-        // 保存更新后的数据 - groups 到 sync, bookmarks 到 local
-        await chrome.storage.sync.set({ groups: newGroups });
-        await chrome.storage.local.set({ bookmarks: newBookmarks });
+        // 保存更新后的数据 - 保留所有现有数据，只是添加或更新从Chrome同步来的数据
+        await chrome.storage.sync.set({ groups: currentGroups });
+        await chrome.storage.local.set({ bookmarks: currentBookmarks });
 
         console.log('[Reverse Sync] Synced from Chrome successfully');
         console.log('[Reverse Sync] Groups:', newGroups.length);
