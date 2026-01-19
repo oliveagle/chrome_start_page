@@ -68,12 +68,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             return true; // 保持消息通道开放
 
         case 'fetchIcon':
-            // 获取网站图标
+            console.log('[Background] Received fetchIcon request for:', request.url);
             fetchWebsiteIcon(request.url)
                 .then(iconUrl => {
+                    console.log('[Background] ✅ fetchWebsiteIcon returned:', iconUrl);
                     sendResponse({ success: true, iconUrl });
                 })
                 .catch(error => {
+                    console.log('[Background] ❌ fetchWebsiteIcon failed:', error.message);
                     sendResponse({ success: false, error: error.message });
                 });
             return true; // 保持消息通道开放
@@ -207,19 +209,186 @@ async function fetchPageTitle(url) {
 // 获取网站favicon
 async function fetchWebsiteIcon(url) {
     try {
-        // 从URL中提取域名
         const urlObj = new URL(url);
         const origin = urlObj.origin;
+        const hostname = urlObj.hostname;
+        const protocol = urlObj.protocol;
+        const candidateUrls = [];
 
-        // 直接返回网站的 favicon.ico 路径
-        // 这是最通用的方法，大部分网站都支持
-        const faviconUrl = `${origin}/favicon.ico`;
+        const iconFromHtml = await extractIconFromHtml(url);
+        if (iconFromHtml) {
+            const absoluteIconUrl = new URL(iconFromHtml, origin).toString();
+            candidateUrls.push(absoluteIconUrl);
+        }
 
-        return faviconUrl;
+        const isIpAddress = /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
+        const parts = hostname.split('.');
+
+        if (!isIpAddress && parts.length > 2) {
+            const mainHostname = parts.slice(1).join('.');
+            const mainOrigin = `${protocol}//${mainHostname}`;
+            candidateUrls.push(`${mainOrigin}/favicon.ico`);
+            candidateUrls.push(`${protocol}//www.${mainHostname}/favicon.ico`);
+        }
+
+        if (hostname.startsWith('www.')) {
+            const withoutWww = `${protocol}//${hostname.substring(4)}`;
+            candidateUrls.push(`${withoutWww}/favicon.ico`);
+        }
+
+        candidateUrls.push(`${origin}/favicon.ico`);
+
+        const commonFaviconPaths = [
+            '/assets/favicon.ico',
+            '/static/favicon.ico',
+            '/img/favicon.ico',
+            '/images/favicon.ico',
+            '/public/favicon.ico',
+            '/favicon.png',
+            '/favicon.svg',
+            '/apple-touch-icon.png',
+            '/apple-touch-icon-precomposed.png'
+        ];
+
+        for (const path of commonFaviconPaths) {
+            candidateUrls.push(`${origin}${path}`);
+        }
+
+        const uniqueUrls = [...new Set(candidateUrls)];
+        console.log('[Favicon] Candidate URLs:', uniqueUrls);
+
+        const workingUrl = await validateFaviconUrl(uniqueUrls);
+        return workingUrl;
 
     } catch (error) {
         console.error('Invalid URL:', error);
         throw new Error('Invalid URL: ' + error.message);
+    }
+}
+
+        const isIpAddress = /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
+
+        if (!isIpAddress) {
+            const parts = hostname.split('.');
+            if (parts.length > 2) {
+                const mainHostname = parts.slice(1).join('.');
+                const mainOrigin = `${protocol}//${mainHostname}`;
+                candidateUrls.push(`${mainOrigin}/favicon.ico`);
+                candidateUrls.push(`${protocol}//www.${mainHostname}/favicon.ico`);
+            }
+
+            if (hostname.startsWith('www.')) {
+                const withoutWww = `${protocol}//${hostname.substring(4)}`;
+                candidateUrls.push(`${withoutWww}/favicon.ico`);
+            }
+        }
+
+        candidateUrls.push(`${origin}/favicon.ico`);
+
+        const uniqueUrls = [...new Set(candidateUrls)];
+        console.log('[Favicon] Candidate URLs:', uniqueUrls);
+
+        const workingUrl = await validateFaviconUrl(uniqueUrls);
+        return workingUrl;
+
+    } catch (error) {
+        console.error('Invalid URL:', error);
+        throw new Error('Invalid URL: ' + error.message);
+    }
+}
+
+async function validateFaviconUrl(candidateUrls) {
+    console.log('[Favicon] validateFaviconUrl called with', candidateUrls.length, 'candidates');
+
+    for (const url of candidateUrls) {
+        try {
+            console.log('[Favicon] Trying to fetch:', url);
+            const response = await fetch(url, {
+                method: 'GET',
+                cache: 'no-cache',
+                redirect: 'follow'
+            });
+
+            console.log('[Favicon] Response status:', response.status, 'type:', response.type);
+
+            if (response.ok && response.status >= 200 && response.status < 300) {
+                const contentType = response.headers.get('content-type');
+                console.log('[Favicon] Content-Type:', contentType);
+                if (contentType && (contentType.includes('image/') || contentType.includes('x-icon'))) {
+                    console.log('[Favicon] ✅ Found working URL:', url);
+                    return url;
+                }
+            }
+        } catch (error) {
+            console.log('[Favicon] ❌ Failed to fetch:', url, error.message);
+            continue;
+        }
+    }
+
+    console.log('[Favicon] No valid URL found with CORS, trying no-cors mode');
+
+    for (const url of candidateUrls) {
+        try {
+            console.log('[Favicon] Trying no-cors:', url);
+            const response = await fetch(url, {
+                method: 'GET',
+                mode: 'no-cors',
+                cache: 'no-cache'
+            });
+
+            console.log('[Favicon] no-cors response type:', response.type);
+            if (response.type === 'opaque') {
+                console.log('[Favicon] ✅ Using (opaque response):', url);
+                return url;
+            }
+        } catch (error) {
+            console.log('[Favicon] no-cors failed:', url, error.message);
+            continue;
+        }
+    }
+
+    console.log('[Favicon] ❌ All candidates failed, returning first candidate');
+    return candidateUrls[0] || null;
+}
+
+// 从 HTML 页面中提取 favicon
+async function extractIconFromHtml(url) {
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            mode: 'cors',
+            credentials: 'omit',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; Chrome Extension)'
+            }
+        });
+
+        if (!response.ok) {
+            return null;
+        }
+
+        const html = await response.text();
+
+        const iconSelectors = [
+            /<link[^>]*rel=["'](?:shortcut )?icon["'][^>]*href=["']([^"']+)["']/i,
+            /<link[^>]*rel=["']apple-touch-icon["'][^>]*href=["']([^"']+)["']/i,
+            /<link[^>]*rel=["']apple-touch-icon-precomposed["'][^>]*href=["']([^"']+)["']/i,
+            /<link[^>]*href=["']([^"']+)["'][^>]*rel=["'](?:shortcut )?icon["']/i,
+            /<link[^>]*href=["']([^"']+\.ico|favicon[^"']+)["'][^>]*>/i
+        ];
+
+        for (const selector of iconSelectors) {
+            const match = html.match(selector);
+            if (match && match[1]) {
+                console.log('[Favicon] Found icon in HTML:', match[1]);
+                return match[1];
+            }
+        }
+
+        return null;
+    } catch (error) {
+        console.log('[Favicon] Failed to extract icon from HTML:', error.message);
+        return null;
     }
 }
 

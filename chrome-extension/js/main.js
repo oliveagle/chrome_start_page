@@ -946,26 +946,35 @@ class ChromeStartPageApp {
 
     // 从 URL 获取图标
     async fetchIconFromUrl(url) {
+        console.log('[Main] fetchIconFromUrl called for:', url);
+
         return new Promise((resolve) => {
             if (typeof chrome !== 'undefined' && chrome.runtime) {
+                console.log('[Main] Sending message to background.js');
                 chrome.runtime.sendMessage(
                     { action: 'fetchIcon', url: url },
                     (response) => {
+                        console.log('[Main] Received response:', response);
                         if (response && response.iconUrl) {
+                            console.log('[Main] ✅ Got iconUrl:', response.iconUrl);
                             resolve(response.iconUrl);
                         } else {
+                            console.log('[Main] ❌ No iconUrl in response, using fallback');
                             // 备用方案：直接使用网站的 favicon.ico
                             try {
                                 const urlObj = new URL(url);
                                 const iconUrl = `${urlObj.origin}/favicon.ico`;
+                                console.log('[Main] Fallback iconUrl:', iconUrl);
                                 resolve(iconUrl);
                             } catch (error) {
+                                console.log('[Main] Fallback failed:', error);
                                 resolve(null);
                             }
                         }
                     }
                 );
             } else {
+                console.log('[Main] Chrome API not available, using fallback');
                 // 备用方案：直接使用网站的 favicon.ico
                 try {
                     const urlObj = new URL(url);

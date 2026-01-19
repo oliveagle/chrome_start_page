@@ -358,28 +358,24 @@ class BookmarkManager {
         try {
             const urlObj = new URL(url);
             const domain = urlObj.origin;
-            const hostname = urlObj.hostname; // 主域名，如 trip.larkenterprise.com
-            const port = urlObj.port; // 端口号
+            const hostname = urlObj.hostname;
+            const port = urlObj.port;
 
-            // 对于IP地址，我们需要包含端口信息以区分不同的服务
-            const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
-            const cacheKey = isIP && port ? `${hostname}:${port}` : hostname;
+            // 对于任何带端口的地址，都应该按 host:port 来缓存
+            const cacheKey = port ? `${hostname}:${port}` : hostname;
 
-            console.log('[Icon Cache] Checking cache for URL:', url);
-            console.log('[Icon Cache] Domain:', domain, 'Hostname:', hostname, 'Port:', port, 'CacheKey:', cacheKey);
+            console.log('[Icon Cache] === Checking cache for URL:', url);
+            console.log('[Icon Cache] Domain:', domain, '| Hostname:', hostname, '| Port:', port, '| CacheKey:', cacheKey);
 
-            // 查找所有已有图标的书签
             const allBookmarks = await this.getAllBookmarks();
             const bookmarksWithIcons = allBookmarks.filter(b => b.icon);
 
-            console.log('[Icon Cache] Total bookmarks:', allBookmarks.length);
-            console.log('[Icon Cache] Bookmarks with icons:', bookmarksWithIcons.length);
-
             if (bookmarksWithIcons.length > 0) {
-                console.log('[Icon Cache] Available icons:', bookmarksWithIcons.map(b => ({
-                    url: b.url,
-                    icon: b.icon
-                })));
+                console.log('[Icon Cache] Existing bookmarks with icons:');
+                bookmarksWithIcons.forEach(b => {
+                    const bUrlObj = new URL(b.url);
+                    console.log('  -', b.url, '| Origin:', bUrlObj.origin, '| Icon:', b.icon);
+                });
             }
 
             // 策略 1: 完全匹配域名 (origin)
@@ -389,7 +385,7 @@ class BookmarkManager {
                     const bUrlObj = new URL(b.url);
                     const match = bUrlObj.origin === domain;
                     if (match) {
-                        console.log('[Icon Cache] Strategy 1 matched:', b.url, '→', b.icon);
+                        console.log('[Icon Cache] Strategy 1 MATCHED:', b.url, 'origin:', bUrlObj.origin, 'target:', domain);
                     }
                     return match;
                 } catch (e) {
@@ -397,47 +393,14 @@ class BookmarkManager {
                 }
             });
 
-            // 策略 2: 对于IP地址，匹配IP:端口；对于域名，匹配主域名
-            if (!cachedBookmark) {
-                cachedBookmark = allBookmarks.find(b => {
-                    if (!b.icon) return false;
-                    try {
-                        const bUrlObj = new URL(b.url);
-                        const bHostname = bUrlObj.hostname;
-                        const bPort = bUrlObj.port;
-
-                        if (isIP) {
-                            // 对于IP地址，必须匹配IP和端口
-                            const bIsIP = /^\d+\.\d+\.\d+\.\d+$/.test(bHostname);
-                            const match = bIsIP && bHostname === hostname && bPort === port;
-                            if (match) {
-                                console.log('[Icon Cache] Strategy 2 (IP) matched:', b.url, '→', b.icon);
-                            }
-                            return match;
-                        } else {
-                            // 对于域名，匹配相同的主域名或父域名
-                            const match = bHostname === hostname ||
-                                hostname.endsWith('.' + bHostname) ||
-                                bHostname.endsWith('.' + hostname);
-                            if (match) {
-                                console.log('[Icon Cache] Strategy 2 (Domain) matched:', b.url, '→', b.icon);
-                            }
-                            return match;
-                        }
-                    } catch (e) {
-                        return false;
-                    }
-                });
-            }
-
             if (cachedBookmark) {
-                console.log(`[Icon Cache] ✅ Cache HIT for ${url}, reusing icon from ${cachedBookmark.url}`);
+                console.log(`[Icon Cache] ✅ Cache HIT! Using icon from: ${cachedBookmark.url}`);
                 console.log('[Icon Cache] Icon URL:', cachedBookmark.icon);
-            } else {
-                console.log(`[Icon Cache] ❌ Cache MISS for ${url}`);
+                return cachedBookmark.icon;
             }
 
-            return cachedBookmark ? cachedBookmark.icon : null;
+            console.log(`[Icon Cache] ❌ Cache MISS, will fetch new icon`);
+            return null;
         } catch (error) {
             console.error('[Icon Cache] Error:', error);
             return null;
