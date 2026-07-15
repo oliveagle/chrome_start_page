@@ -288,6 +288,7 @@ class StorageManager {
             iconSize: '16px',
             layout: 'grid',
             autoFetchIcons: true,
+            syncToChromeBookmarks: true,  // 默认开启 Chrome 书签同步：扩展改动 -> Chrome 书签 -> Google 账户
         };
     }
 

@@ -59,6 +59,7 @@ class GroupManager {
             
             if (newGroup) {
                 console.log('New group created:', newGroup);
+                this._enqueueOp('add', newGroup);
                 return newGroup;
             } else {
                 throw new Error('创建组失败');
@@ -108,6 +109,7 @@ class GroupManager {
             
             if (updatedGroup) {
                 console.log('Group updated:', updatedGroup);
+                this._enqueueOp('update', updatedGroup);
                 return updatedGroup;
             } else {
                 throw new Error('更新组失败');
@@ -142,6 +144,11 @@ class GroupManager {
             
             if (success) {
                 console.log('Group deleted:', id);
+                // 软删：记到 trash，再 enqueue remove op
+                if (typeof Trash !== 'undefined') {
+                    Trash.push({ kind: 'group', refId: id, payload: group }).catch(err => console.error('[Trash] push group failed', err));
+                }
+                this._enqueueOp('remove', { id });
                 return true;
             } else {
                 throw new Error('删除组失败');
@@ -253,6 +260,28 @@ class GroupManager {
             console.error('Failed to get all groups stats:', error);
             return [];
         }
+    }
+
+    // 把 CRUD 操作入队（push 方向：扩展 -> Chrome）
+    // 队列由 chrome.bookmarks 自身承载，天然跨设备同步
+    _enqueueOp(type, refOrPayload) {
+        if (typeof BookmarkQueue === 'undefined') {
+            console.warn('[Group] BookmarkQueue not available, skipping op enqueue');
+            return;
+        }
+        const queue = new BookmarkQueue();
+        const refId = (refOrPayload && refOrPayload.id) || (typeof refOrPayload === 'string' ? refOrPayload : null);
+        if (!refId) {
+            console.warn('[Group] enqueue op: missing refId', type, refOrPayload);
+            return;
+        }
+        queue.enqueue({
+            direction: 'push',
+            type,
+            target: 'group',
+            refId,
+            payload: type === 'remove' ? { id: refId } : refOrPayload
+        }).catch(err => console.error('[Group] enqueue op failed', err));
     }
 
     // ===== 排序和过滤方法 =====

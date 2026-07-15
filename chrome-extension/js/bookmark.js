@@ -113,6 +113,7 @@ class BookmarkManager {
 
             if (createdBookmark) {
                 console.log('New bookmark created:', createdBookmark);
+                this._enqueueOp('add', createdBookmark);
 
                 // 只有在没有图标时才尝试获取（异步，不阻塞书签创建）
                 if (!createdBookmark.icon) {
@@ -183,6 +184,7 @@ class BookmarkManager {
 
             if (updatedBookmark) {
                 console.log('Bookmark updated:', updatedBookmark);
+                this._enqueueOp('update', updatedBookmark);
 
                 // 如果URL发生变化且没有图标，尝试获取新图标
                 if (updates.url && updates.url !== bookmark.url && !updatedBookmark.icon) {
@@ -214,6 +216,11 @@ class BookmarkManager {
 
             if (success) {
                 console.log('Bookmark deleted:', id);
+                // 软删：记到 trash，再 enqueue remove op
+                if (typeof Trash !== 'undefined') {
+                    Trash.push({ kind: 'bookmark', refId: id, payload: bookmark }).catch(err => console.error('[Trash] push bookmark failed', err));
+                }
+                this._enqueueOp('remove', { id });
                 return true;
             } else {
                 throw new Error('删除书签失败');
@@ -469,6 +476,27 @@ class BookmarkManager {
         }
 
         return { valid: true, message: '数据有效' };
+    }
+
+    // 把 CRUD 操作入队（push 方向：扩展 -> Chrome）
+    _enqueueOp(type, refOrPayload) {
+        if (typeof BookmarkQueue === 'undefined') {
+            console.warn('[Bookmark] BookmarkQueue not available, skipping op enqueue');
+            return;
+        }
+        const queue = new BookmarkQueue();
+        const refId = (refOrPayload && refOrPayload.id) || (typeof refOrPayload === 'string' ? refOrPayload : null);
+        if (!refId) {
+            console.warn('[Bookmark] enqueue op: missing refId', type, refOrPayload);
+            return;
+        }
+        queue.enqueue({
+            direction: 'push',
+            type,
+            target: 'bookmark',
+            refId,
+            payload: type === 'remove' ? { id: refId } : refOrPayload
+        }).catch(err => console.error('[Bookmark] enqueue op failed', err));
     }
 
     // ===== 统计数据方法 =====

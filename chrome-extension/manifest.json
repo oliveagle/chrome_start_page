@@ -18,7 +18,8 @@
     "storage",
     "tabs",
     "bookmarks",
-    "contextMenus"
+    "contextMenus",
+    "alarms"
   ],
   "host_permissions": [
     "http://*/*",

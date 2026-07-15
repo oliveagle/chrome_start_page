@@ -16,7 +16,6 @@
         
         <!-- 固定到右下角的按钮 -->
         <div class="header-actions">
-            <button id="syncFromChromeBtn" class="btn btn-success" title="从Chrome书签同步">📥 同步</button>
             <button id="addGroupBtn" class="btn btn-primary">添加分组</button>
             <button id="addBookmarkBtn" class="btn btn-secondary">添加书签</button>
             <button id="settingsBtn" class="btn btn-tertiary">设置</button>
@@ -151,9 +150,30 @@
                     <div class="form-group">
                         <label>
                             <input type="checkbox" id="syncToChromeBookmarks">
-                            同步书签到Chrome原生书签管理器
+                            启用Chrome书签同步
                         </label>
-                        <small>启用后，所有分组和书签将自动同步到Chrome书签管理器中名为"Chrome Start Page Bookmarks"的文件夹</small>
+                        <small>启用后，扩展的书签会自动推送到 Chrome 书签里名为"Chrome Start Page Bookmarks"的文件夹，由 Chrome 自身同步到你的 Google 账户；下方两个按钮可手工立即同步。</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Chrome 书签同步操作</label>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <button type="button" id="settingsSyncFromChromeBtn" class="btn btn-success" title="读取 Chrome 书签里 Chrome Start Page Bookmarks 文件夹到扩展">📥 从Chrome读取</button>
+                            <button type="button" id="settingsSyncToChromeBtn" class="btn btn-primary" title="将扩展里的分组和书签写入到 Chrome 书签">📤 写入Chrome</button>
+                        </div>
+                        <small id="settingsSyncStatus" style="display:block; margin-top:6px; font-size:11px; color:#718096;">就绪</small>
+                    </div>
+                    <div class="form-group">
+                        <label>操作队列（双向同步）</label>
+                        <div id="queueStats" style="font-size: 12px; color: #4a5568; margin-bottom: 8px;">
+                            加载中…
+                        </div>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <button type="button" id="queueRefreshBtn" class="btn btn-secondary" title="刷新队列状态">🔄 刷新</button>
+                            <button type="button" id="queueDrainBtn" class="btn btn-primary" title="立刻执行队列里所有待处理操作">▶ 立即排空</button>
+                            <button type="button" id="queueRetryBtn" class="btn btn-secondary" title="重试所有失败的操作">🔁 重试失败</button>
+                            <button type="button" id="queueClearBtn" class="btn btn-cancel" title="清空队列（慎用：丢失所有未同步操作）">🗑 清空队列</button>
+                        </div>
+                        <small style="display:block; margin-top:6px; font-size:11px; color:#718096;">队列存在 Chrome 书签的 <code>__op_queue__</code> 文件夹里，随 Chrome 账户自动跨设备同步。</small>
                     </div>
                     <div class="form-group">
                         <label>
@@ -196,6 +216,7 @@
 
     <!-- Scripts -->
     <script src="js/storage.js"></script>
+    <script src="js/ops.js"></script>
     <script src="js/group.js"></script>
     <script src="js/bookmark.js"></script>
     <script src="js/main.js"></script>

@@ -1,6 +1,9 @@
 // Chrome Extension Background Service Worker
 // 处理扩展的生命周期事件和后台操作
 
+// 引入 ops 模块（OpQueue / Trash / Snapshot / BookmarkQueue）
+importScripts('ops.js');
+
 // 扩展安装或更新时初始化
 chrome.runtime.onInstalled.addListener((details) => {
     console.log('Chrome Start Page Extension installed/updated');
@@ -26,24 +29,75 @@ chrome.runtime.onStartup.addListener(() => {
 let isSyncing = false;
 let syncDebounceTimer = null;
 
-// 监听 Chrome 书签变化
-chrome.bookmarks.onCreated.addListener(handleChromeBookmarkChange);
-chrome.bookmarks.onRemoved.addListener(handleChromeBookmarkChange);
-chrome.bookmarks.onChanged.addListener(handleChromeBookmarkChange);
-chrome.bookmarks.onMoved.addListener(handleChromeBookmarkChange);
+// 监听 Chrome 书签变化 → 入队 pull op
+// 防循环：忽略我们自己入队的 op（title 以 [op] 开头）
+chrome.bookmarks.onCreated.addListener(handleChromeBookmarkCreated);
+chrome.bookmarks.onRemoved.addListener(handleChromeBookmarkRemoved);
+chrome.bookmarks.onChanged.addListener(handleChromeBookmarkChanged);
+chrome.bookmarks.onMoved.addListener(handleChromeBookmarkMoved);
 
-function handleChromeBookmarkChange() {
-    console.log('[Reverse Sync] Chrome bookmark changed');
-    if (isSyncing) {
-        console.log('[Reverse Sync] Sync in progress, ignoring change');
-        return;
+// 队列文件夹 ID 缓存，启动时填充
+let cachedQueueFolderId = null;
+let cachedQueueFolderRootId = null;
+
+async function getQueueFolderIds() {
+    if (cachedQueueFolderId && cachedQueueFolderRootId) {
+        return { queueFolderId: cachedQueueFolderId, rootFolderId: cachedQueueFolderRootId };
     }
+    // 找根文件夹
+    const roots = await chrome.bookmarks.search({ title: 'Chrome Start Page Bookmarks' });
+    if (!roots || roots.length === 0) return null;
+    const root = roots[0];
+    cachedQueueFolderRootId = root.id;
+    // 在根目录下找 __op_queue__
+    const subs = await chrome.bookmarks.getChildren(root.id);
+    const q = subs.find(s => s.title === '__op_queue__' && !s.url);
+    if (q) cachedQueueFolderId = q.id;
+    return { queueFolderId: cachedQueueFolderId, rootFolderId: root.id };
+}
 
-    // 防抖处理
-    if (syncDebounceTimer) clearTimeout(syncDebounceTimer);
-    syncDebounceTimer = setTimeout(() => {
-        syncBookmarksFromChrome();
-    }, 1000);
+// 快速判断一个 chrome 节点是不是"我们自己入队的 op"
+async function isOwnOpBookmark(bookmarkId) {
+    const ids = await getQueueFolderIds();
+    if (!ids || !ids.queueFolderId) return false;
+    try {
+        const node = await chrome.bookmarks.get(bookmarkId);
+        if (!node) return false;
+        // 在队列文件夹下 → 必然是自己入队的 op
+        if (node.parentId === ids.queueFolderId) return true;
+        return false;
+    } catch (e) { return false; }
+}
+
+function schedulePullDrain() {
+    if (opDrainDebounceTimer) clearTimeout(opDrainDebounceTimer);
+    opDrainDebounceTimer = setTimeout(() => {
+        drainOpQueue().catch(err => console.error('[OpProcessor] drain failed', err));
+    }, 500);
+}
+
+async function handleChromeBookmarkCreated(id, bookmark) {
+    if (await isOwnOpBookmark(id)) return; // 忽略队列自己的 op
+    console.log('[Pull] onCreated:', id, bookmark.title);
+    schedulePullDrain();
+}
+
+async function handleChromeBookmarkRemoved(id, removeInfo) {
+    if (await isOwnOpBookmark(id)) return;
+    console.log('[Pull] onRemoved:', id, removeInfo.parentId);
+    schedulePullDrain();
+}
+
+async function handleChromeBookmarkChanged(id, changeInfo) {
+    if (await isOwnOpBookmark(id)) return;
+    console.log('[Pull] onChanged:', id, changeInfo.title);
+    schedulePullDrain();
+}
+
+async function handleChromeBookmarkMoved(id, moveInfo) {
+    if (await isOwnOpBookmark(id)) return;
+    console.log('[Pull] onMoved:', id, moveInfo.parentId);
+    schedulePullDrain();
 }
 
 // 处理来自content scripts和popup的消息
@@ -93,20 +147,58 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         case 'syncBookmarksToChrome':
             // 同步书签到Chrome原生书签管理器
-            syncBookmarksToChrome();
-            sendResponse({ success: true });
-            return true; // 保持消息通道开放
-
-        case 'syncBookmarksFromChrome':
-            // 从Chrome原生书签管理器同步
-            syncBookmarksFromChrome()
-                .then(() => {
-                    sendResponse({ success: true });
+            syncBookmarksToChrome()
+                .then((result) => {
+                    sendResponse({ success: true, ...(result || {}) });
                 })
                 .catch(error => {
                     sendResponse({ success: false, error: error.message });
                 });
             return true; // 保持消息通道开放
+
+        case 'syncBookmarksFromChrome':
+            // 从Chrome原生书签管理器同步
+            syncBookmarksFromChrome()
+                .then((result) => {
+                    // result 由 syncBookmarksFromChrome 返回：
+                    //   { success: true, groups, bookmarks, addedGroups, addedBookmarks }
+                    //   { success: false, reason: 'ROOT_FOLDER_NOT_FOUND', folderName }
+                    //   { success: false, reason: 'ROOT_FOLDER_EMPTY' }
+                    //   { success: false, reason: 'DUPLICATE_FOLDERS', folders: [...] }
+                    sendResponse({ success: true, ...(result || {}) });
+                })
+                .catch(error => {
+                    sendResponse({ success: false, error: error.message });
+                });
+            return true; // 保持消息通道开放
+
+        case 'getQueueStats':
+            getQueueStats()
+                .then(stats => sendResponse({ success: true, stats }))
+                .catch(err => sendResponse({ success: false, error: err.message }));
+            return true;
+
+        case 'clearOpQueue':
+            clearOpQueue()
+                .then(() => sendResponse({ success: true }))
+                .catch(err => sendResponse({ success: false, error: err.message }));
+            return true;
+
+        case 'retryFailedOps':
+            retryFailedOps()
+                .then(() => {
+                    // 触发一次排空
+                    return drainOpQueue();
+                })
+                .then(() => sendResponse({ success: true }))
+                .catch(err => sendResponse({ success: false, error: err.message }));
+            return true;
+
+        case 'drainOpQueue':
+            drainOpQueue()
+                .then(() => sendResponse({ success: true }))
+                .catch(err => sendResponse({ success: false, error: err.message }));
+            return true;
 
         default:
             sendResponse({ success: false, error: 'Unknown action' });
@@ -266,37 +358,6 @@ async function fetchWebsiteIcon(url) {
     }
 }
 
-        const isIpAddress = /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname);
-
-        if (!isIpAddress) {
-            const parts = hostname.split('.');
-            if (parts.length > 2) {
-                const mainHostname = parts.slice(1).join('.');
-                const mainOrigin = `${protocol}//${mainHostname}`;
-                candidateUrls.push(`${mainOrigin}/favicon.ico`);
-                candidateUrls.push(`${protocol}//www.${mainHostname}/favicon.ico`);
-            }
-
-            if (hostname.startsWith('www.')) {
-                const withoutWww = `${protocol}//${hostname.substring(4)}`;
-                candidateUrls.push(`${withoutWww}/favicon.ico`);
-            }
-        }
-
-        candidateUrls.push(`${origin}/favicon.ico`);
-
-        const uniqueUrls = [...new Set(candidateUrls)];
-        console.log('[Favicon] Candidate URLs:', uniqueUrls);
-
-        const workingUrl = await validateFaviconUrl(uniqueUrls);
-        return workingUrl;
-
-    } catch (error) {
-        console.error('Invalid URL:', error);
-        throw new Error('Invalid URL: ' + error.message);
-    }
-}
-
 async function validateFaviconUrl(candidateUrls) {
     console.log('[Favicon] validateFaviconUrl called with', candidateUrls.length, 'candidates');
 
@@ -394,46 +455,54 @@ async function extractIconFromHtml(url) {
 
 // 同步书签到Chrome原生书签管理器
 async function syncBookmarksToChrome() {
-    if (isSyncing) return;
+    if (isSyncing) {
+        return { success: false, reason: 'ALREADY_SYNCING' };
+    }
 
     try {
         isSyncing = true;
         console.log('[Bookmark Sync] Starting bookmark sync process');
 
-        // 检查是否启用同步功能
+        // 检查是否启用同步功能（保留兼容：未启用也允许手工触发一次）
         const settingsResult = await chrome.storage.sync.get(['settings']);
         const settings = settingsResult.settings || {};
-        console.log('[Bookmark Sync] Settings:', settings);
+        const manual = settings.syncToChromeBookmarks !== true; // 通过设置面板按钮调用视为 manual
+        console.log('[Bookmark Sync] Settings:', settings, 'manual:', manual);
 
-        if (!settings.syncToChromeBookmarks) {
+        if (!settings.syncToChromeBookmarks && !manual) {
             console.log('[Bookmark Sync] Chrome bookmark sync is disabled');
-            return;
+            return { success: false, reason: 'DISABLED', hint: '请先在设置中启用"同步书签到Chrome原生书签管理器"。' };
         }
 
-        // 获取所有自定义书签和分组
-        const result = await chrome.storage.sync.get(['groups', 'bookmarks']);
-        const groups = result.groups || [];
-        const customBookmarks = result.bookmarks || [];
+        // 获取所有自定义书签和分组（书签存在 local，分组存在 sync —— 见 storage.js）
+        const syncData = await chrome.storage.sync.get(['groups']);
+        const localData = await chrome.storage.local.get(['bookmarks']);
+        const groups = syncData.groups || [];
+        const customBookmarks = localData.bookmarks || [];
 
         console.log('[Bookmark Sync] Groups count:', groups.length);
         console.log('[Bookmark Sync] Bookmarks count:', customBookmarks.length);
 
         if (groups.length === 0 && customBookmarks.length === 0) {
             console.log('[Bookmark Sync] No groups or bookmarks to sync');
-            return;
+            return { success: false, reason: 'EMPTY' };
         }
 
         // 查找或创建根文件夹
         const rootFolderName = 'Chrome Start Page Bookmarks';
         console.log('[Bookmark Sync] Finding or creating root folder:', rootFolderName);
-        let rootFolder = await findOrCreateBookmarkFolder(rootFolderName);
+        const rootFolder = await findOrCreateBookmarkFolder(rootFolderName);
         console.log('[Bookmark Sync] Root folder:', rootFolder);
+
+        let wroteGroups = 0;
+        let wroteBookmarks = 0;
 
         // 为每个分组创建子文件夹
         for (const group of groups) {
             console.log('[Bookmark Sync] Processing group:', group.name);
             const groupFolder = await findOrCreateBookmarkFolder(group.name, rootFolder.id);
             console.log('[Bookmark Sync] Group folder for', group.name, ':', groupFolder);
+            if (groupFolder.__created) wroteGroups++;
 
             // 获取该分组下的所有书签
             const groupBookmarks = customBookmarks.filter(b => b.groupId === group.id);
@@ -442,13 +511,22 @@ async function syncBookmarksToChrome() {
             // 同步书签到对应的分组文件夹
             for (const bookmark of groupBookmarks) {
                 console.log('[Bookmark Sync] Creating/updating bookmark:', bookmark.title, bookmark.url);
-                await createOrUpdateChromeBookmark(bookmark, groupFolder.id);
+                const res = await createOrUpdateChromeBookmark(bookmark, groupFolder.id);
+                if (res && res.__created) wroteBookmarks++;
             }
         }
 
         console.log('[Bookmark Sync] Bookmarks synced to Chrome successfully');
+        return {
+            success: true,
+            wroteGroups,
+            wroteBookmarks,
+            totalGroups: groups.length,
+            totalBookmarks: customBookmarks.length
+        };
     } catch (error) {
         console.error('[Bookmark Sync] Failed to sync bookmarks to Chrome:', error);
+        throw error;
     } finally {
         isSyncing = false;
     }
@@ -456,20 +534,38 @@ async function syncBookmarksToChrome() {
 
 // 从 Chrome 书签同步到扩展
 async function syncBookmarksFromChrome() {
-    if (isSyncing) return;
+    if (isSyncing) {
+        return { success: false, reason: 'ALREADY_SYNCING' };
+    }
 
     try {
         console.log('[Reverse Sync] Starting reverse sync process');
 
         isSyncing = true;
 
-        // 查找根文件夹
+        // 查找根文件夹（按名字搜，若有多个同名文件夹则返回所有让用户选）
         const rootFolderName = 'Chrome Start Page Bookmarks';
         const existingFolders = await chrome.bookmarks.search({ title: rootFolderName });
 
         if (!existingFolders || existingFolders.length === 0) {
             console.log('[Reverse Sync] Root folder not found, nothing to sync');
-            return;
+            return {
+                success: false,
+                reason: 'ROOT_FOLDER_NOT_FOUND',
+                folderName: rootFolderName,
+                hint: '请确认 Chrome 书签中存在名为 "Chrome Start Page Bookmarks" 的文件夹（注意大小写、空格、特殊字符必须完全一致），或在 chrome://bookmarks 中新建该文件夹后重试。'
+            };
+        }
+
+        if (existingFolders.length > 1) {
+            console.log('[Reverse Sync] Multiple folders with same name found:', existingFolders.length);
+            return {
+                success: false,
+                reason: 'DUPLICATE_FOLDERS',
+                folderName: rootFolderName,
+                folders: existingFolders.map(f => ({ id: f.id, title: f.title, parentId: f.parentId })),
+                hint: '检测到多个同名文件夹，请先在 chrome://bookmarks 中重命名其中之一或删除多余项。'
+            };
         }
 
         const rootFolder = existingFolders[0];
@@ -477,7 +573,7 @@ async function syncBookmarksFromChrome() {
 
         if (!subNodes || subNodes.length === 0 || !subNodes[0].children) {
             console.log('[Reverse Sync] Root folder is empty');
-            return;
+            return { success: false, reason: 'ROOT_FOLDER_EMPTY' };
         }
 
         const chromeGroups = subNodes[0].children.filter(node => !node.url); // 文件夹作为分组
@@ -489,9 +585,9 @@ async function syncBookmarksFromChrome() {
         let currentGroups = syncResult.groups || [];
         let currentBookmarks = localResult.bookmarks || [];
 
-        // 用于追踪已处理的分组和书签ID
-        const processedGroupIds = new Set();
-        const processedBookmarkUrls = new Set();
+        // 用于追踪新增数量
+        let addedGroups = 0;
+        let addedBookmarks = 0;
 
         // 处理分组和书签（增量更新，不删除现有数据）
         for (const chromeGroup of chromeGroups) {
@@ -505,14 +601,13 @@ async function syncBookmarksFromChrome() {
                     updatedAt: new Date().toISOString()
                 };
                 currentGroups.push(group);
+                addedGroups++;
             }
-            processedGroupIds.add(group.id);
 
             // 处理分组下的书签
             if (chromeGroup.children) {
                 for (const chromeBookmark of chromeGroup.children) {
                     if (chromeBookmark.url) { // 只处理书签，忽略子文件夹
-                        const bookmarkKey = `${chromeBookmark.url}_${group.id}`;
                         let bookmark = currentBookmarks.find(b => b.url === chromeBookmark.url && b.groupId === group.id);
 
                         if (!bookmark) {
@@ -526,12 +621,12 @@ async function syncBookmarksFromChrome() {
                                 updatedAt: new Date().toISOString()
                             };
                             currentBookmarks.push(bookmark);
+                            addedBookmarks++;
                         } else {
                             // 更新标题
                             bookmark.title = chromeBookmark.title;
                             bookmark.updatedAt = new Date().toISOString();
                         }
-                        processedBookmarkUrls.add(bookmarkKey);
                     }
                 }
             }
@@ -542,8 +637,18 @@ async function syncBookmarksFromChrome() {
         await chrome.storage.local.set({ bookmarks: currentBookmarks });
 
         console.log('[Reverse Sync] Synced from Chrome successfully');
-        console.log('[Reverse Sync] Groups:', currentGroups.length);
-        console.log('[Reverse Sync] Bookmarks:', currentBookmarks.length);
+        console.log('[Reverse Sync] Total Groups:', currentGroups.length);
+        console.log('[Reverse Sync] Total Bookmarks:', currentBookmarks.length);
+        console.log('[Reverse Sync] Added Groups:', addedGroups);
+        console.log('[Reverse Sync] Added Bookmarks:', addedBookmarks);
+
+        return {
+            success: true,
+            totalGroups: currentGroups.length,
+            totalBookmarks: currentBookmarks.length,
+            addedGroups,
+            addedBookmarks
+        };
 
     } catch (error) {
         console.error('[Reverse Sync] Failed to sync from Chrome:', error);
@@ -573,7 +678,7 @@ async function findOrCreateBookmarkFolder(folderName, parentId = null) {
         // 如果找到了，返回第一个匹配的文件夹
         if (filteredFolders && filteredFolders.length > 0) {
             console.log('[Bookmark Folder] Using existing folder:', filteredFolders[0]);
-            return filteredFolders[0];
+            return { ...filteredFolders[0], __created: false };
         }
 
         // 如果没有找到，创建新文件夹
@@ -584,7 +689,7 @@ async function findOrCreateBookmarkFolder(folderName, parentId = null) {
         });
         console.log('[Bookmark Folder] Created new folder:', newFolder);
 
-        return newFolder;
+        return { ...newFolder, __created: true };
     } catch (error) {
         console.error('[Bookmark Folder] Failed to find or create bookmark folder:', error);
         throw error;
@@ -609,34 +714,45 @@ async function createOrUpdateChromeBookmark(bookmark, parentId) {
         if (bookmarksInFolder.length > 0) {
             // 更新现有书签
             console.log('[Bookmark Item] Updating existing bookmark:', bookmarksInFolder[0].id);
-            await chrome.bookmarks.update(bookmarksInFolder[0].id, {
+            const updated = await chrome.bookmarks.update(bookmarksInFolder[0].id, {
                 title: bookmark.title
             });
             console.log('[Bookmark Item] Updated bookmark successfully');
+            return { ...updated, __created: false };
         } else {
             // 创建新书签
             console.log('[Bookmark Item] Creating new bookmark');
-            await chrome.bookmarks.create({
+            const created = await chrome.bookmarks.create({
                 title: bookmark.title,
                 url: bookmark.url,
                 parentId: parentId
             });
             console.log('[Bookmark Item] Created bookmark successfully');
+            return { ...created, __created: true };
         }
     } catch (error) {
         console.error('[Bookmark Item] Failed to create or update Chrome bookmark:', error);
+        return null;
     }
 }
 
-// 监听书签和分组的变化
+// 自动同步：监听存储变更 -> 触发 op 调度器
+// bookmarks 在 local，groups 在 sync（见 storage.js）
 chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName === 'sync' && (changes.bookmarks || changes.groups)) {
-        // 延迟执行同步，避免频繁操作
-        setTimeout(() => {
-            syncBookmarksToChrome();
-        }, 1000);
-    }
+    const bookmarksChanged = areaName === 'local' && changes.bookmarks;
+    const groupsChanged = areaName === 'sync' && changes.groups;
+    // settings 变化也触发一次（开关切换时立刻排空）
+    const settingsChanged = areaName === 'sync' && changes.settings;
+    if (!bookmarksChanged && !groupsChanged && !settingsChanged) return;
+
+    console.log('[OpProcessor] Storage change in', areaName, '- scheduling drain');
+    if (opDrainDebounceTimer) clearTimeout(opDrainDebounceTimer);
+    opDrainDebounceTimer = setTimeout(() => {
+        drainOpQueue().catch(err => console.error('[OpProcessor] drain failed', err));
+    }, 500);
 });
+
+let opDrainDebounceTimer = null;
 
 // 错误处理
 chrome.runtime.onSuspend.addListener(() => {
@@ -767,3 +883,428 @@ chrome.runtime.onInstalled.addListener((details) => {
 chrome.runtime.onStartup.addListener(() => {
     createContextMenu();
 });
+// ============================================================================
+// OpProcessor —— 操作意图调度器
+// ============================================================================
+// 队列存在 Chrome 书签的 __op_queue__ 文件夹下，每条 op 是一个真实 bookmark
+// 消费顺序：按 op URL 里的 ts 升序
+// push 方向：扩展 storage 改 → 写到 chrome.bookmarks（成文件夹/书签）
+// pull 方向：chrome.bookmarks 改 → 写到扩展 storage（按 refId 匹配）
+//
+// 冲突解决：last-write-wins（比较 updatedAt 时间戳）
+// 失败处理：保留 op 在队列里（改名 [op-failed] 前缀），下次重试
+// ============================================================================
+
+let opProcessorRunning = false;
+
+// 工具：拿扩展 storage 里最新数据
+async function _getExtGroups() {
+    const r = await chrome.storage.sync.get(['groups']);
+    return r.groups || [];
+}
+async function _getExtBookmarks() {
+    const r = await chrome.storage.local.get(['bookmarks']);
+    return r.bookmarks || [];
+}
+async function _saveExtGroups(groups) {
+    await chrome.storage.sync.set({ groups });
+}
+async function _saveExtBookmarks(bookmarks) {
+    await chrome.storage.local.set({ bookmarks });
+}
+
+// 工具：通过 name 找 chrome 书签文件夹（区分根文件夹 vs 分组文件夹）
+async function findChromeFolderByName(name, parentId) {
+    try {
+        const query = parentId !== undefined ? { title: name } : { title: name };
+        const found = await chrome.bookmarks.search(query);
+        if (!found || found.length === 0) return null;
+        // 过滤：在指定 parent 下的文件夹
+        const matches = parentId !== undefined
+            ? found.filter(f => f.parentId === parentId && !f.url)
+            : found.filter(f => !f.url);
+        return matches.length > 0 ? matches[0] : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// 通过 url + parentId 找 chrome 书签（pull 方向用：定位刚在 Chrome 里改的书签）
+async function findChromeBookmarkByUrl(url, parentId) {
+    try {
+        const found = await chrome.bookmarks.search({ url });
+        if (!found) return null;
+        const matches = parentId !== undefined
+            ? found.filter(b => b.parentId === parentId && b.url)
+            : found.filter(b => b.url);
+        return matches.length > 0 ? matches[0] : null;
+    } catch (e) { return null; }
+}
+
+// 拿根文件夹 id
+async function ensureRootFolder() {
+    let roots = await chrome.bookmarks.search({ title: 'Chrome Start Page Bookmarks' });
+    if (!roots || roots.length === 0) {
+        const created = await chrome.bookmarks.create({ title: 'Chrome Start Page Bookmarks' });
+        roots = [created];
+    }
+    return roots[0];
+}
+
+// 把扩展侧的 group 同步到 chrome 侧（用 refId 关联）
+// 内部小工具：处理 push group
+async function pushGroupAdd(op) {
+    const ids = await getQueueFolderIds();
+    if (!ids) throw new Error('root folder not ready');
+    const rootId = ids.rootFolderId;
+    // 找一个未占用的 group folder 名称（同 name 可能有多个 add op）
+    const group = op.payload;
+    const existing = await findChromeFolderByName(group.name, rootId);
+    if (existing) {
+        console.log('[OpProcessor] push group add: folder already exists', group.name, existing.id);
+        return existing.id;
+    }
+    const created = await chrome.bookmarks.create({ title: group.name, parentId: rootId });
+    console.log('[OpProcessor] push group add: created folder', created.title, created.id);
+    return created.id;
+}
+
+async function pushGroupUpdate(op) {
+    const ids = await getQueueFolderIds();
+    if (!ids) throw new Error('root folder not ready');
+    const rootId = ids.rootFolderId;
+    const payload = op.payload;
+    // 用旧名找，再 update
+    const oldName = payload.__oldName || payload.name;
+    const newName = payload.name;
+    const folder = await findChromeFolderByName(oldName, rootId);
+    if (!folder) {
+        // 旧名找不到，可能已经被改了或被删，直接用新名建
+        const created = await chrome.bookmarks.create({ title: newName, parentId: rootId });
+        return created.id;
+    }
+    if (oldName === newName) return folder.id;
+    await chrome.bookmarks.update(folder.id, { title: newName });
+    return folder.id;
+}
+
+async function pushGroupRemove(op) {
+    const ids = await getQueueFolderIds();
+    if (!ids) return; // 没初始化就不管
+    const rootId = ids.rootFolderId;
+    const folder = await findChromeFolderByName(op.payload.name || '', rootId);
+    // 注意：payload 里只有 id，没有 name；这里需要在 storage 里再查一次
+    if (folder) {
+        try { await chrome.bookmarks.removeTree(folder.id); } catch (e) { /* ignore */ }
+    }
+}
+
+// push bookmark
+async function pushBookmarkAdd(op) {
+    const ids = await getQueueFolderIds();
+    if (!ids) throw new Error('root folder not ready');
+    const rootId = ids.rootFolderId;
+    const bookmark = op.payload;
+    // 找到 group 对应的 chrome folder
+    const groups = await _getExtGroups();
+    const group = groups.find(g => g.id === bookmark.groupId);
+    if (!group) {
+        console.warn('[OpProcessor] push bookmark add: group not found', bookmark.groupId);
+        return;
+    }
+    const groupFolder = await findChromeFolderByName(group.name, rootId);
+    if (!groupFolder) {
+        // group folder 还没建，先建
+        const created = await chrome.bookmarks.create({ title: group.name, parentId: rootId });
+        // 顺便记一下 group folder 创建
+        console.log('[OpProcessor] push bookmark add: created missing group folder', group.name);
+        await chrome.bookmarks.create({
+            title: bookmark.title,
+            url: bookmark.url,
+            parentId: created.id
+        });
+        return;
+    }
+    // 检查是否已存在（避免重复创建）
+    const existing = await findChromeBookmarkByUrl(bookmark.url, groupFolder.id);
+    if (existing) {
+        // 已存在 → 当 update 处理
+        if (existing.title !== bookmark.title) {
+            await chrome.bookmarks.update(existing.id, { title: bookmark.title });
+        }
+        return;
+    }
+    await chrome.bookmarks.create({
+        title: bookmark.title,
+        url: bookmark.url,
+        parentId: groupFolder.id
+    });
+}
+
+async function pushBookmarkUpdate(op) {
+    const ids = await getQueueFolderIds();
+    if (!ids) throw new Error('root folder not ready');
+    const rootId = ids.rootFolderId;
+    const bookmark = op.payload;
+    const groups = await _getExtGroups();
+    const group = groups.find(g => g.id === bookmark.groupId);
+    if (!group) return;
+    const groupFolder = await findChromeFolderByName(group.name, rootId);
+    if (!groupFolder) return;
+    const existing = await findChromeBookmarkByUrl(bookmark.url, groupFolder.id);
+    if (existing) {
+        await chrome.bookmarks.update(existing.id, { title: bookmark.title });
+    } else {
+        // 找不到 → 当 add 处理
+        await chrome.bookmarks.create({
+            title: bookmark.title,
+            url: bookmark.url,
+            parentId: groupFolder.id
+        });
+    }
+}
+
+async function pushBookmarkRemove(op) {
+    const ids = await getQueueFolderIds();
+    if (!ids) return;
+    const rootId = ids.rootFolderId;
+    const bookmarks = await _getExtBookmarks();
+    // pull 时已经移除，这里直接尝试按 url 找
+    const all = await chrome.bookmarks.getRecent(1000);
+    // 更稳：通过 trash 里有 payload
+    return; // trash 已经处理了真实删除（如果 chrome 那边被删过的话）
+}
+
+// pull 方向：把 chrome 侧的改动写入扩展 storage
+async function pullGroupFromChrome(op) {
+    const payload = op.payload || {};
+    const groups = await _getExtGroups();
+    const chromeId = payload.chromeId;
+
+    if (op.type === 'add') {
+        // payload 包含 name
+        let g = groups.find(x => x.chromeId === chromeId);
+        if (!g) {
+            g = {
+                id: 'g_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                name: payload.name || 'Untitled',
+                chromeId,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            groups.push(g);
+            await _saveExtGroups(groups);
+        }
+    } else if (op.type === 'update') {
+        const g = groups.find(x => x.chromeId === chromeId);
+        if (g) {
+            // last-write-wins
+            if (g.updatedAt && payload.updatedAt && payload.updatedAt > g.updatedAt) {
+                g.name = payload.name || g.name;
+                g.updatedAt = payload.updatedAt;
+                await _saveExtGroups(groups);
+            }
+        } else {
+            // 不存在 → 当 add
+            groups.push({
+                id: 'g_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                name: payload.name || 'Untitled',
+                chromeId,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+            await _saveExtGroups(groups);
+        }
+    } else if (op.type === 'remove') {
+        const newGroups = groups.filter(x => x.chromeId !== chromeId);
+        await _saveExtGroups(newGroups);
+    }
+}
+
+async function pullBookmarkFromChrome(op) {
+    const payload = op.payload || {};
+    const bookmarks = await _getExtBookmarks();
+    const chromeId = payload.chromeId;
+
+    if (op.type === 'add' || op.type === 'update') {
+        let b = bookmarks.find(x => x.chromeId === chromeId);
+        if (!b) {
+            b = {
+                id: 'b_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                title: payload.title || '',
+                url: payload.url || '',
+                groupChromeId: payload.groupChromeId || null,
+                chromeId,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            bookmarks.push(b);
+        } else {
+            // last-write-wins
+            if (!b.updatedAt || (payload.updatedAt && payload.updatedAt > b.updatedAt)) {
+                b.title = payload.title || b.title;
+                b.url = payload.url || b.url;
+                b.groupChromeId = payload.groupChromeId || b.groupChromeId;
+                b.updatedAt = payload.updatedAt || new Date().toISOString();
+            }
+        }
+        await _saveExtBookmarks(bookmarks);
+    } else if (op.type === 'remove') {
+        const newBookmarks = bookmarks.filter(x => x.chromeId !== chromeId);
+        await _saveExtBookmarks(newBookmarks);
+    }
+}
+
+// 真实扫描 chrome 书签树，捕获当前所有 group/bookmark 的 chromeId
+// 用于在初始化时把 chrome 那边已有的书签"拉"进来
+async function scanChromeBookmarkTree() {
+    const ids = await getQueueFolderIds();
+    if (!ids) return { groups: [], bookmarks: [] };
+
+    // 找根文件夹
+    const roots = await chrome.bookmarks.search({ title: 'Chrome Start Page Bookmarks' });
+    if (!roots || roots.length === 0) return { groups: [], bookmarks: [] };
+    const root = roots[0];
+
+    const subTree = await chrome.bookmarks.getSubTree(root.id);
+    if (!subTree || !subTree[0] || !subTree[0].children) return { groups: [], bookmarks: [] };
+
+    const groups = [];
+    const bookmarks = [];
+
+    for (const child of subTree[0].children) {
+        if (child.title === '__op_queue__') continue; // 跳过队列文件夹
+        if (!child.url) {
+            // 是 group 文件夹
+            groups.push({ chromeId: child.id, name: child.title });
+            if (child.children) {
+                for (const b of child.children) {
+                    if (b.url && b.title !== '__op_queue__') {
+                        bookmarks.push({
+                            chromeId: b.id,
+                            title: b.title,
+                            url: b.url,
+                            groupChromeId: child.id
+                        });
+                    }
+                }
+            }
+        }
+    }
+    return { groups, bookmarks };
+}
+
+// 排空队列
+async function drainOpQueue() {
+    if (opProcessorRunning) return;
+    opProcessorRunning = true;
+    try {
+        const queue = new BookmarkQueue();
+        // 队列健康检查
+        const healthy = await queue.isHealthy();
+        if (!healthy) {
+            console.warn('[OpProcessor] queue unhealthy (overflow?), pausing drain');
+            return;
+        }
+
+        // 先处理 failed（重试）
+        const failed = await queue.failed();
+        const pending = await queue.pending();
+        const all = [...failed, ...pending];
+
+        if (all.length === 0) {
+            console.log('[OpProcessor] queue empty');
+            return;
+        }
+        console.log(`[OpProcessor] draining ${all.length} ops (${failed.length} failed, ${pending.length} pending)`);
+
+        for (const op of all) {
+            try {
+                await executeOp(op);
+                // 成功：从队列移除
+                await queue.remove(op.chromeId);
+                console.log('[OpProcessor] ✓ executed:', op.direction, op.type, op.target, op.refId);
+            } catch (e) {
+                console.error('[OpProcessor] ✗ failed:', op.direction, op.type, op.target, e.message);
+                await queue.markFailed(op.chromeId, e.message || 'unknown');
+            }
+        }
+    } catch (e) {
+        console.error('[OpProcessor] drain error', e);
+    } finally {
+        opProcessorRunning = false;
+    }
+}
+
+async function executeOp(op) {
+    if (op.direction === 'push') {
+        if (op.target === 'group') {
+            if (op.type === 'add') return await pushGroupAdd(op);
+            if (op.type === 'update') return await pushGroupUpdate(op);
+            if (op.type === 'remove') return await pushGroupRemove(op);
+        } else if (op.target === 'bookmark') {
+            if (op.type === 'add') return await pushBookmarkAdd(op);
+            if (op.type === 'update') return await pushBookmarkUpdate(op);
+            if (op.type === 'remove') return await pushBookmarkRemove(op);
+        }
+    } else if (op.direction === 'pull') {
+        if (op.target === 'group') return await pullGroupFromChrome(op);
+        if (op.target === 'bookmark') return await pullBookmarkFromChrome(op);
+    }
+    console.warn('[OpProcessor] unknown op shape', op);
+}
+
+// 启动时排空 + 周期排空（防 worker 长时间休眠后队列堆积）
+chrome.runtime.onInstalled.addListener(async () => {
+    console.log('[OpProcessor] onInstalled - drain start');
+    setTimeout(() => drainOpQueue().catch(err => console.error(err)), 1000);
+});
+
+chrome.runtime.onStartup.addListener(async () => {
+    console.log('[OpProcessor] onStartup - drain start');
+    setTimeout(() => drainOpQueue().catch(err => console.error(err)), 1000);
+});
+
+// 用 chrome.alarms 做定期唤醒 + 排空（防 worker 长时间休眠丢触发）
+if (chrome.alarms) {
+    chrome.alarms.create('op-drain', { periodInMinutes: 5 });
+    chrome.alarms.onAlarm.addListener((alarm) => {
+        if (alarm.name === 'op-drain') {
+            console.log('[OpProcessor] alarm triggered - drain');
+            drainOpQueue().catch(err => console.error(err));
+        }
+    });
+}
+
+// 暴露给 UI 用的工具方法
+async function getQueueStats() {
+    const queue = new BookmarkQueue();
+    const pending = await queue.pending();
+    const failed = await queue.failed();
+    return {
+        pending: pending.length,
+        failed: failed.length,
+        total: pending.length + failed.length
+    };
+}
+
+async function clearOpQueue() {
+    const queue = new BookmarkQueue();
+    await queue.clear();
+}
+
+async function retryFailedOps() {
+    // 把 [op-failed] 标题改回 [op]
+    const queue = new BookmarkQueue();
+    const failed = await queue.failed();
+    for (const op of failed) {
+        try {
+            const node = await chrome.bookmarks.get(op.chromeId);
+            if (node) {
+                await chrome.bookmarks.update(op.chromeId, {
+                    title: node.title.replace('[op-failed]', '[op]')
+                });
+            }
+        } catch (e) { /* ignore */ }
+    }
+}

@@ -1216,6 +1216,153 @@ class ChromeStartPageApp {
 
         // 加载当前设置到表单
         await this.loadSettingsIntoForm();
+
+        // 绑定设置面板内的 Chrome 书签同步按钮（重复打开不会重复绑定）
+        this.bindSettingsSyncButtons();
+
+        // 加载初始同步状态
+        await this.refreshSettingsSyncStatus();
+
+        // 加载队列状态
+        await this.refreshQueueStats();
+    }
+
+    // 绑定设置面板内的 Chrome 书签同步按钮
+    bindSettingsSyncButtons() {
+        const fromBtn = document.getElementById('settingsSyncFromChromeBtn');
+        if (fromBtn && !fromBtn.dataset.bound) {
+            fromBtn.dataset.bound = '1';
+            fromBtn.addEventListener('click', () => this.syncFromChromeBookmarks());
+        }
+        const toBtn = document.getElementById('settingsSyncToChromeBtn');
+        if (toBtn && !toBtn.dataset.bound) {
+            toBtn.dataset.bound = '1';
+            toBtn.addEventListener('click', () => this.syncToChromeBookmarks());
+        }
+
+        // 队列按钮
+        const queueRefresh = document.getElementById('queueRefreshBtn');
+        if (queueRefresh && !queueRefresh.dataset.bound) {
+            queueRefresh.dataset.bound = '1';
+            queueRefresh.addEventListener('click', () => this.refreshQueueStats());
+        }
+        const queueDrain = document.getElementById('queueDrainBtn');
+        if (queueDrain && !queueDrain.dataset.bound) {
+            queueDrain.dataset.bound = '1';
+            queueDrain.addEventListener('click', () => this.drainQueue());
+        }
+        const queueRetry = document.getElementById('queueRetryBtn');
+        if (queueRetry && !queueRetry.dataset.bound) {
+            queueRetry.dataset.bound = '1';
+            queueRetry.addEventListener('click', () => this.retryFailedQueue());
+        }
+        const queueClear = document.getElementById('queueClearBtn');
+        if (queueClear && !queueClear.dataset.bound) {
+            queueClear.dataset.bound = '1';
+            queueClear.addEventListener('click', () => this.clearQueue());
+        }
+    }
+
+    // ===== 操作队列 UI =====
+
+    async refreshQueueStats() {
+        const el = document.getElementById('queueStats');
+        if (!el) return;
+        el.textContent = '加载中…';
+        try {
+            const response = await new Promise(resolve => {
+                chrome.runtime.sendMessage({ action: 'getQueueStats' }, resolve);
+            });
+            if (chrome.runtime.lastError) {
+                el.textContent = '获取失败：' + chrome.runtime.lastError.message;
+                el.style.color = '#e53e3e';
+                return;
+            }
+            if (response && response.success) {
+                const { pending, failed, total } = response.stats;
+                if (total === 0) {
+                    el.innerHTML = '<span style="color:#38a169;">✓ 队列空闲</span>';
+                } else {
+                    const parts = [];
+                    if (pending > 0) parts.push(`<span style="color:#3182ce;">待处理 ${pending}</span>`);
+                    if (failed > 0) parts.push(`<span style="color:#e53e3e;">失败 ${failed}</span>`);
+                    el.innerHTML = parts.join(' · ') + ` · 总计 ${total}`;
+                }
+            } else {
+                el.textContent = '获取失败：' + (response?.error || '未知错误');
+                el.style.color = '#e53e3e';
+            }
+        } catch (e) {
+            el.textContent = '获取失败：' + e.message;
+            el.style.color = '#e53e3e';
+        }
+    }
+
+    async drainQueue() {
+        this.showNotification('正在排空队列...', 'info');
+        const response = await new Promise(resolve => {
+            chrome.runtime.sendMessage({ action: 'drainOpQueue' }, resolve);
+        });
+        if (response?.success) {
+            this.showSuccess('队列已排空');
+        } else {
+            this.showError('排空失败：' + (response?.error || '未知错误'));
+        }
+        this.refreshQueueStats();
+    }
+
+    async retryFailedQueue() {
+        const response = await new Promise(resolve => {
+            chrome.runtime.sendMessage({ action: 'retryFailedOps' }, resolve);
+        });
+        if (response?.success) {
+            this.showSuccess('失败操作已重新入队');
+        } else {
+            this.showError('重试失败：' + (response?.error || '未知错误'));
+        }
+        this.refreshQueueStats();
+    }
+
+    async clearQueue() {
+        if (!confirm('确定清空操作队列？这会丢失所有未同步的操作（已经同步完成的不会受影响）。')) return;
+        const response = await new Promise(resolve => {
+            chrome.runtime.sendMessage({ action: 'clearOpQueue' }, resolve);
+        });
+        if (response?.success) {
+            this.showSuccess('队列已清空');
+        } else {
+            this.showError('清空失败：' + (response?.error || '未知错误'));
+        }
+        this.refreshQueueStats();
+    }
+
+    // 刷新设置面板上的同步状态文字
+    async refreshSettingsSyncStatus(text, type = 'info') {
+        const el = document.getElementById('settingsSyncStatus');
+        if (!el) return;
+        if (text) {
+            el.textContent = text;
+            el.style.color = type === 'error' ? '#e53e3e'
+                : type === 'success' ? '#38a169'
+                : type === 'progress' ? '#3182ce'
+                : '#718096';
+        } else {
+            // 拉一次 storage 里的最后状态
+            try {
+                const result = await chrome.storage.sync.get(['settings']);
+                const lastSyncAt = result.settings?.lastChromeSyncAt;
+                if (lastSyncAt) {
+                    el.textContent = `上次同步：${new Date(lastSyncAt).toLocaleString()}`;
+                    el.style.color = '#718096';
+                } else {
+                    el.textContent = '就绪';
+                    el.style.color = '#718096';
+                }
+            } catch (e) {
+                el.textContent = '就绪';
+                el.style.color = '#718096';
+            }
+        }
     }
 
     // 加载设置到表单
@@ -1252,11 +1399,6 @@ class ChromeStartPageApp {
 
             // 显示成功通知
             this.showNotification('设置已保存', 'success');
-
-            // 如果启用了书签同步，触发一次同步
-            if (settings.syncToChromeBookmarks) {
-                chrome.runtime.sendMessage({ action: 'syncBookmarksToChrome' });
-            }
         } catch (error) {
             console.error('Failed to save settings:', error);
             this.showNotification('保存设置失败', 'error');
@@ -1267,23 +1409,121 @@ class ChromeStartPageApp {
     async syncFromChromeBookmarks() {
         try {
             this.showNotification('正在从Chrome书签同步...', 'info');
+            this.refreshSettingsSyncStatus('正在从Chrome书签读取...', 'progress');
 
             // 调用 background script 的同步功能
             chrome.runtime.sendMessage(
                 { action: 'syncBookmarksFromChrome' },
                 async (response) => {
+                    if (chrome.runtime.lastError) {
+                        // service worker 启动失败 / 消息未送达
+                        console.error('[Sync] runtime.lastError:', chrome.runtime.lastError.message);
+                        this.showError('同步失败：后台服务未响应，请重载扩展后重试');
+                        this.refreshSettingsSyncStatus('失败：后台服务无响应', 'error');
+                        return;
+                    }
+
                     if (response && response.success) {
-                        this.showSuccess('同步成功！');
+                        const added = response.addedGroups || 0;
+                        const addedB = response.addedBookmarks || 0;
+                        if (added > 0 || addedB > 0) {
+                            this.showSuccess(`同步成功！新增 ${added} 个分组 / ${addedB} 个书签`);
+                            this.refreshSettingsSyncStatus(`读取成功：新增 ${added} 分组 / ${addedB} 书签`, 'success');
+                        } else {
+                            this.showSuccess('同步成功！（无新增数据）');
+                            this.refreshSettingsSyncStatus(`读取成功：共 ${response.totalGroups || 0} 分组 / ${response.totalBookmarks || 0} 书签，无新增`, 'success');
+                        }
+                        // 记录时间戳
+                        await chrome.storage.sync.get(['settings']).then(async (r) => {
+                            const settings = r.settings || {};
+                            settings.lastChromeSyncAt = Date.now();
+                            settings.lastChromeSyncDirection = 'from';
+                            await chrome.storage.sync.set({ settings });
+                        });
                         // 重新加载数据
                         await this.renderGroups();
+                    } else if (response && response.reason) {
+                        // background 显式返回失败原因
+                        const reason = response.reason;
+                        const hint = response.hint ? '\n\n' + response.hint : '';
+                        let msg;
+                        switch (reason) {
+                            case 'ROOT_FOLDER_NOT_FOUND':
+                                msg = `未找到根文件夹 "${response.folderName || 'Chrome Start Page Bookmarks'}"。请确认 chrome://bookmarks 中存在同名文件夹。${hint}`;
+                                break;
+                            case 'ROOT_FOLDER_EMPTY':
+                                msg = `根文件夹为空，无可同步的书签。请先在 Chrome 书签管理器中向该文件夹添加书签。${hint}`;
+                                break;
+                            case 'DUPLICATE_FOLDERS':
+                                msg = `找到 ${(response.folders || []).length} 个同名根文件夹，请先在 chrome://bookmarks 中重命名或删除多余的。${hint}`;
+                                break;
+                            case 'ALREADY_SYNCING':
+                                msg = `上一次同步尚未完成，请稍后再试。${hint}`;
+                                break;
+                            default:
+                                msg = `同步失败: ${reason} ${hint}`;
+                        }
+                        console.warn('[Sync] background rejected:', response);
+                        this.showError(msg);
+                        this.refreshSettingsSyncStatus(`失败：${reason}`, 'error');
                     } else {
                         this.showError('同步失败: ' + (response?.error || '未知错误'));
+                        this.refreshSettingsSyncStatus(`失败：${response?.error || '未知错误'}`, 'error');
                     }
                 }
             );
         } catch (error) {
             console.error('Failed to sync from Chrome bookmarks:', error);
             this.showError('同步失败: ' + error.message);
+        }
+    }
+
+    // 写入扩展分组和书签到 Chrome 书签
+    async syncToChromeBookmarks() {
+        try {
+            this.showNotification('正在写入到Chrome书签...', 'info');
+            this.refreshSettingsSyncStatus('正在写入Chrome书签...', 'progress');
+
+            chrome.runtime.sendMessage(
+                { action: 'syncBookmarksToChrome' },
+                async (response) => {
+                    if (chrome.runtime.lastError) {
+                        console.error('[SyncTo] runtime.lastError:', chrome.runtime.lastError.message);
+                        this.showError('写入失败：后台服务未响应，请重载扩展后重试');
+                        this.refreshSettingsSyncStatus('失败：后台服务无响应', 'error');
+                        return;
+                    }
+
+                    if (response && response.success) {
+                        const wrote = response.wroteGroups || 0;
+                        const wroteB = response.wroteBookmarks || 0;
+                        if (response.reason === 'EMPTY') {
+                            this.showNotification('没有可写入的数据，请先添加分组或书签', 'info');
+                            this.refreshSettingsSyncStatus('无数据可写入', 'info');
+                        } else {
+                            this.showSuccess(`已写入Chrome书签！${wrote} 分组 / ${wroteB} 书签`);
+                            this.refreshSettingsSyncStatus(`写入成功：${wrote} 分组 / ${wroteB} 书签`, 'success');
+                            // 记录时间戳
+                            await chrome.storage.sync.get(['settings']).then(async (r) => {
+                                const settings = r.settings || {};
+                                settings.lastChromeSyncAt = Date.now();
+                                settings.lastChromeSyncDirection = 'to';
+                                await chrome.storage.sync.set({ settings });
+                            });
+                        }
+                    } else if (response && response.reason) {
+                        this.showError(`写入失败：${response.reason} ${response.hint || ''}`);
+                        this.refreshSettingsSyncStatus(`失败：${response.reason}`, 'error');
+                    } else {
+                        this.showError('写入失败: ' + (response?.error || '未知错误'));
+                        this.refreshSettingsSyncStatus(`失败：${response?.error || '未知错误'}`, 'error');
+                    }
+                }
+            );
+        } catch (error) {
+            console.error('Failed to sync to Chrome bookmarks:', error);
+            this.showError('写入失败: ' + error.message);
+            this.refreshSettingsSyncStatus(`失败：${error.message}`, 'error');
         }
     }
 }
