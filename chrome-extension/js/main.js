@@ -320,12 +320,15 @@ class ChromeStartPageApp {
     // 创建书签元素
     async createBookmarkElement(bookmark) {
         const iconUrl = await this.getBookmarkIconUrl(bookmark);
+        const fallbackSvg = this.getDefaultBookmarkIconSvg();
 
         return `
             <li class="bookmark-item" data-bookmark-id="${bookmark.id}">
                 <div class="bookmark-info" data-action="open-bookmark" data-bookmark-id="${bookmark.id}">
                     <div class="bookmark-icon">
-                        ${iconUrl ? `<img src="${iconUrl}" alt="" class="bookmark-icon-img">` : '🔗'}
+                        ${iconUrl
+                            ? `<img src="${iconUrl}" alt="" class="bookmark-icon-img" onerror="window.__defaultBookmarkIcon && window.__defaultBookmarkIcon(this)">`
+                            : fallbackSvg}
                     </div>
                     <span class="bookmark-title">${this.escapeHtml(bookmark.title)}</span>
                 </div>
@@ -339,6 +342,11 @@ class ChromeStartPageApp {
                 </div>
             </li>
         `;
+    }
+
+    // 默认书签图标（内联 SVG）- favicon 加载失败或没 icon 时显示
+    getDefaultBookmarkIconSvg() {
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" class="bookmark-icon-img" width="16" height="16"><rect x="2" y="1" width="12" height="14" rx="2" fill="#718096"/><path d="M5 5h6v1H5zm0 2.5h6v1H5zm0 2.5h4v1H5z" fill="#fff"/></svg>`;
     }
 
     // 获取书签图标URL
@@ -1586,6 +1594,29 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
+
+// 全局默认书签图标兜底（favicon 加载失败时调用）
+window.__defaultBookmarkIcon = function(imgEl) {
+    if (!imgEl || imgEl.dataset.fallbackApplied) return;
+    imgEl.dataset.fallbackApplied = '1';
+    imgEl.onerror = null;
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.classList.add('bookmark-icon-img');
+    const rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', '2'); rect.setAttribute('y', '1');
+    rect.setAttribute('width', '12'); rect.setAttribute('height', '14');
+    rect.setAttribute('rx', '2'); rect.setAttribute('fill', '#718096');
+    svg.appendChild(rect);
+    const path = document.createElementNS(ns, 'path');
+    path.setAttribute('d', 'M5 5h6v1H5zm0 2.5h6v1H5zm0 2.5h4v1H5z');
+    path.setAttribute('fill', '#fff');
+    svg.appendChild(path);
+    imgEl.replaceWith(svg);
+};
 
 // 创建应用实例
 const app = new ChromeStartPageApp();
