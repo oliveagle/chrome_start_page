@@ -577,8 +577,10 @@ async function syncBookmarksFromChrome() {
         }
 
         // 取所有子节点，带上原始索引（在父文件夹下的位置）
+        // 排除内部队列文件夹 __op_queue__
+        const QUEUE_FOLDER = '__op_queue__';
         const allChildren = subNodes[0].children.map((node, idx) => ({ ...node, _chromeIndex: idx }));
-        const chromeGroups = allChildren.filter(node => !node.url); // 文件夹作为分组
+        const chromeGroups = allChildren.filter(node => !node.url && node.title !== QUEUE_FOLDER); // 文件夹作为分组
 
         // 获取现有的扩展数据
         const syncResult = await chrome.storage.sync.get(['groups']);
@@ -642,6 +644,9 @@ async function syncBookmarksFromChrome() {
         }
 
         // 保存更新后的数据 - 保留所有现有数据，只是添加或更新从Chrome同步来的数据
+        // 兜底：清理之前 sync 误拉进来的内部文件夹（防御性，历史数据保护）
+        const internalTitles = new Set(['__op_queue__']);
+        currentGroups = currentGroups.filter(g => !internalTitles.has(g.name));
         await chrome.storage.sync.set({ groups: currentGroups });
         await chrome.storage.local.set({ bookmarks: currentBookmarks });
 
@@ -1296,14 +1301,38 @@ async function executeOp(op) {
 
 // 启动时排空 + 周期排空（防 worker 长时间休眠后队列堆积）
 chrome.runtime.onInstalled.addListener(async () => {
-    console.log('[OpProcessor] onInstalled - drain start');
-    setTimeout(() => drainOpQueue().catch(err => console.error(err)), 1000);
+    console.log('[OpProcessor] onInstalled - cleanup + drain');
+    setTimeout(async () => {
+        await cleanupInternalGroups();
+        return drainOpQueue();
+    }, 1000).catch(err => console.error(err));
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-    console.log('[OpProcessor] onStartup - drain start');
-    setTimeout(() => drainOpQueue().catch(err => console.error(err)), 1000);
+    console.log('[OpProcessor] onStartup - cleanup + drain');
+    setTimeout(async () => {
+        await cleanupInternalGroups();
+        return drainOpQueue();
+    }, 1000).catch(err => console.error(err));
 });
+
+// 清理扩展 storage 里误存的内部 group（如 __op_queue__）
+async function cleanupInternalGroups() {
+    const INTERNAL_TITLES = ['__op_queue__'];
+    try {
+        const r = await chrome.storage.sync.get(['groups']);
+        const groups = r.groups || [];
+        const filtered = groups.filter(g => !INTERNAL_TITLES.includes(g.name));
+        if (filtered.length !== groups.length) {
+            await chrome.storage.sync.set({ groups: filtered });
+            console.log('[Cleanup] Removed', groups.length - filtered.length, 'internal groups');
+            return groups.length - filtered.length;
+        }
+    } catch (e) {
+        console.error('[Cleanup] error:', e);
+    }
+    return 0;
+}
 
 // 用 chrome.alarms 做定期唤醒 + 排空（防 worker 长时间休眠丢触发）
 if (chrome.alarms) {
