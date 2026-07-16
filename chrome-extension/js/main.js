@@ -232,6 +232,15 @@ class ChromeStartPageApp {
                     return;
                 }
 
+                // 按 order 排序（没有 order 的兜底按 createdAt）
+                groups.sort((a, b) => {
+                    const ao = a.order, bo = b.order;
+                    if (ao !== undefined && bo !== undefined) return ao - bo;
+                    if (ao !== undefined) return -1;
+                    if (bo !== undefined) return 1;
+                    return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+                });
+
                 // 创建文档片段，避免多次重排
                 const fragment = document.createDocumentFragment();
 
@@ -268,6 +277,8 @@ class ChromeStartPageApp {
             <div class="group-header">
                 <h3 class="group-title">${this.escapeHtml(group.name)}</h3>
                 <div class="group-actions">
+                    <button class="group-action-btn" data-action="move-group-up" data-group-id="${group.id}" title="上移分组">↑</button>
+                    <button class="group-action-btn" data-action="move-group-down" data-group-id="${group.id}" title="下移分组">↓</button>
                     <button class="group-action-btn" data-action="add-bookmark" data-group-id="${group.id}" title="添加书签">
                         +
                     </button>
@@ -421,6 +432,12 @@ class ChromeStartPageApp {
                 case 'delete-group':
                     await this.confirmDeleteGroup(groupId);
                     break;
+                case 'move-group-up':
+                    await this.moveGroupByOffset(groupId, -1);
+                    break;
+                case 'move-group-down':
+                    await this.moveGroupByOffset(groupId, +1);
+                    break;
                 default:
                     console.warn('Unknown group action:', action);
             }
@@ -428,6 +445,34 @@ class ChromeStartPageApp {
             console.error('Group action failed:', error);
             this.showError(error.message);
         }
+    }
+
+    // 把分组上下移动 offset 个位置
+    async moveGroupByOffset(groupId, offset) {
+        const groups = await storageManager.getGroups();
+        const sorted = groups.slice().sort((a, b) => {
+            const ao = a.order, bo = b.order;
+            if (ao !== undefined && bo !== undefined) return ao - bo;
+            if (ao !== undefined) return -1;
+            if (bo !== undefined) return 1;
+            return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+        });
+        const idx = sorted.findIndex(g => g.id === groupId);
+        if (idx === -1) return;
+        const newIdx = idx + offset;
+        if (newIdx < 0 || newIdx >= sorted.length) return;
+        // 数组中交换
+        [sorted[idx], sorted[newIdx]] = [sorted[newIdx], sorted[idx]];
+        // 重新分配 order
+        sorted.forEach((g, i) => g.order = i);
+        await storageManager.saveGroups(sorted);
+        // 把所有变更的 group 都 enqueue update（让 chrome 那边的 order 也跟上）
+        // 实际上只 enqueue 两个就够了：被移动的两个
+        if (typeof groupManager !== 'undefined' && groupManager._enqueueOp) {
+            groupManager._enqueueOp('update', sorted[idx]);
+            groupManager._enqueueOp('update', sorted[newIdx]);
+        }
+        await this.renderGroups();
     }
 
     // 处理书签操作

@@ -576,7 +576,9 @@ async function syncBookmarksFromChrome() {
             return { success: false, reason: 'ROOT_FOLDER_EMPTY' };
         }
 
-        const chromeGroups = subNodes[0].children.filter(node => !node.url); // 文件夹作为分组
+        // 取所有子节点，带上原始索引（在父文件夹下的位置）
+        const allChildren = subNodes[0].children.map((node, idx) => ({ ...node, _chromeIndex: idx }));
+        const chromeGroups = allChildren.filter(node => !node.url); // 文件夹作为分组
 
         // 获取现有的扩展数据
         const syncResult = await chrome.storage.sync.get(['groups']);
@@ -597,11 +599,18 @@ async function syncBookmarksFromChrome() {
                 group = {
                     id: 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
                     name: chromeGroup.title,
+                    order: chromeGroup._chromeIndex,  // 沿用 Chrome 那边的位置
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString()
                 };
                 currentGroups.push(group);
                 addedGroups++;
+            } else {
+                // 更新顺序
+                if (group.order !== chromeGroup._chromeIndex) {
+                    group.order = chromeGroup._chromeIndex;
+                    group.updatedAt = new Date().toISOString();
+                }
             }
 
             // 处理分组下的书签
@@ -964,9 +973,32 @@ async function pushGroupAdd(op) {
         console.log('[OpProcessor] push group add: folder already exists', group.name, existing.id);
         return existing.id;
     }
+    // 创建后按 order 移到目标位置（chrome.bookmarks.move index = 目标 index）
     const created = await chrome.bookmarks.create({ title: group.name, parentId: rootId });
     console.log('[OpProcessor] push group add: created folder', created.title, created.id);
+    // 移动到正确位置
+    if (typeof group.order === 'number') {
+        await moveChromeFolderToOrder(rootId, created.id, group.order);
+    }
     return created.id;
+}
+
+// 把 chrome folder 移到父文件夹下指定 index 位置（order == index）
+async function moveChromeFolderToOrder(rootId, folderId, targetOrder) {
+    try {
+        const siblings = await chrome.bookmarks.getChildren(rootId);
+        // 过滤出非 __op_queue__ 的 group folder
+        const groupFolders = siblings.filter(s => !s.url && s.title !== '__op_queue__');
+        const currentIdx = groupFolders.findIndex(s => s.id === folderId);
+        if (currentIdx === -1) return;
+        const desiredIdx = Math.max(0, Math.min(targetOrder, groupFolders.length - 1));
+        if (currentIdx === desiredIdx) return;
+        // chrome.bookmarks.move 的 parentId+index 接受 index 为 0..N
+        await chrome.bookmarks.move(folderId, { parentId: rootId, index: desiredIdx });
+        console.log('[OpProcessor] moved folder to order', desiredIdx);
+    } catch (e) {
+        console.warn('[OpProcessor] moveChromeFolderToOrder failed:', e.message);
+    }
 }
 
 async function pushGroupUpdate(op) {
@@ -981,10 +1013,18 @@ async function pushGroupUpdate(op) {
     if (!folder) {
         // 旧名找不到，可能已经被改了或被删，直接用新名建
         const created = await chrome.bookmarks.create({ title: newName, parentId: rootId });
+        if (typeof payload.order === 'number') {
+            await moveChromeFolderToOrder(rootId, created.id, payload.order);
+        }
         return created.id;
     }
-    if (oldName === newName) return folder.id;
-    await chrome.bookmarks.update(folder.id, { title: newName });
+    if (oldName !== newName) {
+        await chrome.bookmarks.update(folder.id, { title: newName });
+    }
+    // order 变了 → 移动
+    if (typeof payload.order === 'number') {
+        await moveChromeFolderToOrder(rootId, folder.id, payload.order);
+    }
     return folder.id;
 }
 

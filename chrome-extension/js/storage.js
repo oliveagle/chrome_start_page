@@ -78,9 +78,12 @@ class StorageManager {
     // 添加新组
     async addGroup(name) {
         const groups = await this.getGroups();
+        // order: 当前最大 order + 1，没有就 0
+        const maxOrder = groups.reduce((m, g) => Math.max(m, (g.order || 0)), -1);
         const newGroup = {
             id: this.generateId(),
             name: name.trim(),
+            order: maxOrder + 1,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
         };

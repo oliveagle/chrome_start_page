@@ -109,6 +109,10 @@ class GroupManager {
             
             if (updatedGroup) {
                 console.log('Group updated:', updatedGroup);
+                // 带 __oldName 让 background 能在 chrome 那边按旧名定位文件夹
+                if (group.name !== updatedGroup.name) {
+                    updatedGroup.__oldName = group.name;
+                }
                 this._enqueueOp('update', updatedGroup);
                 return updatedGroup;
             } else {
