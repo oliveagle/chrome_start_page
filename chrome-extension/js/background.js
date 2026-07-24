@@ -599,7 +599,7 @@ async function syncBookmarksFromChrome() {
             let group = currentGroups.find(g => g.name === chromeGroup.title);
             if (!group) {
                 group = {
-                    id: 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                    id: self.uuidv4(),
                     name: chromeGroup.title,
                     order: chromeGroup._chromeIndex,  // 沿用 Chrome 那边的位置
                     createdAt: new Date().toISOString(),
@@ -623,7 +623,7 @@ async function syncBookmarksFromChrome() {
 
                         if (!bookmark) {
                             bookmark = {
-                                id: 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                                id: self.uuidv4(),
                                 title: chromeBookmark.title,
                                 url: chromeBookmark.url,
                                 groupId: group.id,
@@ -1131,7 +1131,7 @@ async function pullGroupFromChrome(op) {
         let g = groups.find(x => x.chromeId === chromeId);
         if (!g) {
             g = {
-                id: 'g_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                id: self.uuidv4(),
                 name: payload.name || 'Untitled',
                 chromeId,
                 createdAt: new Date().toISOString(),
@@ -1152,7 +1152,7 @@ async function pullGroupFromChrome(op) {
         } else {
             // 不存在 → 当 add
             groups.push({
-                id: 'g_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                id: self.uuidv4(),
                 name: payload.name || 'Untitled',
                 chromeId,
                 createdAt: new Date().toISOString(),
@@ -1175,7 +1175,7 @@ async function pullBookmarkFromChrome(op) {
         let b = bookmarks.find(x => x.chromeId === chromeId);
         if (!b) {
             b = {
-                id: 'b_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+                id: self.uuidv4(),
                 title: payload.title || '',
                 url: payload.url || '',
                 groupChromeId: payload.groupChromeId || null,
@@ -1255,20 +1255,50 @@ async function drainOpQueue() {
         // 先处理 failed（重试）
         const failed = await queue.failed();
         const pending = await queue.pending();
-        const all = [...failed, ...pending];
+        let all = [...failed, ...pending];
+
+        // 跨设备同步后去重：
+        // 1. 跳过 __applied__ 墓簿里已经执行过的 opId
+        // 2. 同 opId 在当前 pending/failed 里多次出现只执行一次
+        const appliedOpIds = await queue.appliedOpIds();
+        const seenOpIds = new Set();
+        const deduped = [];
+        let skippedApplied = 0;
+        let skippedDup = 0;
+        for (const op of all) {
+            if (op.opId && appliedOpIds.has(op.opId)) {
+                // 同步后看到自己已经执行过的 op → 静默删除
+                await queue.remove(op.chromeId);
+                skippedApplied++;
+                continue;
+            }
+            if (op.opId && seenOpIds.has(op.opId)) {
+                // 同 opId 在本批重复 → 跳过第二个
+                await queue.remove(op.chromeId);
+                skippedDup++;
+                continue;
+            }
+            if (op.opId) seenOpIds.add(op.opId);
+            deduped.push(op);
+        }
+        all = deduped;
 
         if (all.length === 0) {
-            console.log('[OpProcessor] queue empty');
+            if (skippedApplied || skippedDup) {
+                console.log(`[OpProcessor] queue drained by dedup (skipped ${skippedApplied} applied, ${skippedDup} duplicate)`);
+            } else {
+                console.log('[OpProcessor] queue empty');
+            }
             return;
         }
-        console.log(`[OpProcessor] draining ${all.length} ops (${failed.length} failed, ${pending.length} pending)`);
+        console.log(`[OpProcessor] draining ${all.length} ops (${failed.length} failed, ${pending.length} pending; skipped ${skippedApplied} applied, ${skippedDup} duplicate)`);
 
         for (const op of all) {
             try {
                 await executeOp(op);
-                // 成功：从队列移除
-                await queue.remove(op.chromeId);
-                console.log('[OpProcessor] ✓ executed:', op.direction, op.type, op.target, op.refId);
+                // 成功：把 op 移到 __applied__ 墓簿（跨设备去重依据）
+                await queue.markApplied(op.chromeId, op.opId);
+                console.log('[OpProcessor] ✓ executed:', op.direction, op.type, op.target, op.refId, 'opId=', op.opId);
             } catch (e) {
                 console.error('[OpProcessor] ✗ failed:', op.direction, op.type, op.target, e.message);
                 await queue.markFailed(op.chromeId, e.message || 'unknown');
@@ -1350,9 +1380,11 @@ async function getQueueStats() {
     const queue = new BookmarkQueue();
     const pending = await queue.pending();
     const failed = await queue.failed();
+    const applied = await queue.appliedOpIds();
     return {
         pending: pending.length,
         failed: failed.length,
+        applied: applied.size,
         total: pending.length + failed.length
     };
 }

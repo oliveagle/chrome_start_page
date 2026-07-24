@@ -1,26 +1,56 @@
 // BookmarkQueue —— 用 Chrome 书签文件夹本身做操作队列
 // 队列项是真实书签，存在 __op_queue__ 文件夹下
 // 优势：天然随 Chrome 账户跨设备同步
+//
+// 跨设备去重机制（2026-07）：
+//   1. 每个 op 带 opId (UUID v4)，跨设备同步后，相同 op 只执行一次
+//   2. __applied__ 子文件夹存已应用 op 的"墓碑"（标题 = opId）
+//      drain 时跳过墓碑里已有的 opId
+//   3. 同一队列文件夹内如果出现 opId 重复（极端 race），也跳过
+//
+// 书签 / 分组 / op 一律用 crypto.randomUUID()（RFC 4122 v4）生成 id，
+//   避免跨设备碰撞。
 
 (function (global) {
     'use strict';
 
-    const QUEUE_FOLDER_TITLE = '__op_queue__';    // 队列文件夹名（双下划线包裹便于识别）
+    const QUEUE_FOLDER_TITLE = '__op_queue__';     // 队列文件夹名
+    const APPLIED_FOLDER_TITLE = '__applied__';    // 已应用 op 墓碑文件夹
     const OP_URL_PREFIX = 'chrome-extension-op://'; // op 书签的 url 前缀
-    const OP_TITLE_PREFIX = '[op]';               // op 书签的 title 前缀（用户在 chrome://bookmarks 里看到时知道是队列项）
-    const OP_FAILED_PREFIX = '[op-failed]';       // 失败的 op 改名加这个前缀
+    const OP_TITLE_PREFIX = '[op]';                // op 书签的 title 前缀
+    const OP_FAILED_PREFIX = '[op-failed]';        // 失败的 op 改名加这个前缀
+    const APPLIED_URL_PREFIX = 'chrome-extension-applied://'; // 墓碑书签的 url 前缀
     const TRASH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
     const SNAPSHOT_DEBOUNCE_MS = 5 * 60 * 1000;
     const MAX_QUEUE = 500;
+    const MAX_APPLIED = 1000; // 墓簿上限，避免无限增长
 
     function nowMs() { return Date.now(); }
-    function genId() { return nowMs() + '_' + Math.random().toString(36).substr(2, 6); }
+
+    // RFC 4122 v4 UUID。Chrome 92+ / manifest v3 全部支持。
+    // 跨设备/跨浏览器天然唯一，替换之前的 nowMs() + Math.random()。
+    function uuidv4() {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+        // 极简 fallback（理论上不会走到）
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+        });
+    }
 
     // ----- URL 编解码 -----
-    // 书签 url 形如：chrome-extension-op://push/add/bookmark/<id>?payload=<base64-json>&ts=<ms>&opId=<x>
-    function encodeOpUrl(direction, type, target, refId, payload) {
+    // 书签 url 形如：
+    //   chrome-extension-op://push/add/bookmark/<uuid-refId>
+    //     ?payload=<base64-json>&ts=<ms>&opId=<uuid>
+    //
+    // 墓簿 url 形如：
+    //   chrome-extension-applied://<uuid-opId>
+    function encodeOpUrl(direction, type, target, refId, payload, opId) {
         const payloadStr = btoa(unescape(encodeURIComponent(JSON.stringify(payload || {}))));
-        return `${OP_URL_PREFIX}${direction}/${type}/${target}/${encodeURIComponent(refId || '')}?payload=${payloadStr}&ts=${nowMs()}&opId=${genId()}`;
+        return `${OP_URL_PREFIX}${direction}/${type}/${target}/${encodeURIComponent(refId || '')}?payload=${payloadStr}&ts=${nowMs()}&opId=${encodeURIComponent(opId || uuidv4())}`;
     }
 
     function decodeOpUrl(url) {
@@ -35,7 +65,8 @@
             const params = new URLSearchParams(query || '');
             const payloadStr = params.get('payload') || '';
             const ts = parseInt(params.get('ts') || '0', 10);
-            const opId = params.get('opId') || '';
+            const opIdRaw = params.get('opId') || '';
+            const opId = decodeURIComponent(opIdRaw);
             let payload = {};
             try { payload = JSON.parse(decodeURIComponent(escape(atob(payloadStr)))); } catch (e) { payload = {}; }
             return { direction, type, target, refId, payload, ts, opId, url };
@@ -45,41 +76,55 @@
         }
     }
 
+    // 从墓簿 url 解出 opId
+    function decodeAppliedUrl(url) {
+        if (!url || !url.startsWith(APPLIED_URL_PREFIX)) return null;
+        try {
+            const opId = decodeURIComponent(url.slice(APPLIED_URL_PREFIX.length));
+            return opId || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
     // ----- 队列文件夹定位 -----
-    // 队列文件夹在 "Chrome Start Page Bookmarks" 根目录下
     async function findOrCreateRootFolder() {
         const rootName = 'Chrome Start Page Bookmarks';
         let roots = await chrome.bookmarks.search({ title: rootName });
         if (!roots || roots.length === 0) {
-            // 根文件夹还没有，先创建
             const created = await chrome.bookmarks.create({ title: rootName, parentId: undefined });
             roots = [created];
         } else if (roots.length > 1) {
-            // 多个同名根：取第一个（重复检测交给 syncBookmarksFromChrome 处理）
             roots = [roots[0]];
         }
         return roots[0];
     }
 
+    async function findOrCreateChildFolder(parentId, title) {
+        const subs = await chrome.bookmarks.getChildren(parentId);
+        let folder = subs.find(s => s.title === title && !s.url);
+        if (!folder) {
+            folder = await chrome.bookmarks.create({ title, parentId });
+            console.log('[BookmarkQueue] Created folder:', title, folder.id);
+        }
+        return folder;
+    }
+
     async function findOrCreateQueueFolder() {
         const root = await findOrCreateRootFolder();
-        // 在根目录下找 __op_queue__
-        const subs = await chrome.bookmarks.getChildren(root.id);
-        let queueFolder = subs.find(s => s.title === QUEUE_FOLDER_TITLE && !s.url);
-        if (!queueFolder) {
-            queueFolder = await chrome.bookmarks.create({
-                title: QUEUE_FOLDER_TITLE,
-                parentId: root.id
-            });
-            console.log('[BookmarkQueue] Created queue folder:', queueFolder.id);
-        }
-        return queueFolder;
+        return await findOrCreateChildFolder(root.id, QUEUE_FOLDER_TITLE);
+    }
+
+    async function findOrCreateAppliedFolder() {
+        const root = await findOrCreateRootFolder();
+        return await findOrCreateChildFolder(root.id, APPLIED_FOLDER_TITLE);
     }
 
     // ----- BookmarkQueue 主类 -----
     class BookmarkQueue {
         constructor() {
             this._queueFolderId = null;
+            this._appliedFolderId = null;
         }
 
         async _ensureFolder() {
@@ -88,6 +133,14 @@
                 this._queueFolderId = f.id;
             }
             return this._queueFolderId;
+        }
+
+        async _ensureAppliedFolder() {
+            if (!this._appliedFolderId) {
+                const f = await findOrCreateAppliedFolder();
+                this._appliedFolderId = f.id;
+            }
+            return this._appliedFolderId;
         }
 
         // 入队一个 op
@@ -99,16 +152,18 @@
                 const target = op.target;         // 'group' | 'bookmark'
                 const refId = op.refId;
                 const payload = op.payload || {};
+                // 调用方可显式传 opId；不传则自动生成 uuid
+                const opId = op.opId || uuidv4();
 
-                const url = encodeOpUrl(direction, type, target, refId, payload);
+                const url = encodeOpUrl(direction, type, target, refId, payload, opId);
                 const title = `${OP_TITLE_PREFIX} ${direction}/${type}/${target}/${refId.slice(0, 8)}`;
                 const created = await chrome.bookmarks.create({
                     title,
                     url,
                     parentId: folderId
                 });
-                console.log('[BookmarkQueue] enqueued:', created.title, created.url);
-                return { id: created.id, url };
+                console.log('[BookmarkQueue] enqueued:', created.title, 'opId=', opId);
+                return { id: created.id, url, opId };
             } catch (e) {
                 console.error('[BookmarkQueue] enqueue failed', e);
                 throw e;
@@ -116,16 +171,23 @@
         }
 
         // 拿所有 pending op（按 ts 升序）
+        // 同 opId 在同一队列里只返回一次
         async pending() {
             try {
                 const folderId = await this._ensureFolder();
                 const items = await chrome.bookmarks.getChildren(folderId);
                 const ops = [];
+                const seenOpIds = new Set();
                 for (const item of items) {
-                    if (!item.url) continue; // 跳过子文件夹（理论上不会有）
-                    if (item.title.startsWith(OP_FAILED_PREFIX)) continue; // 失败的另外处理
+                    if (!item.url) continue;
+                    if (item.title.startsWith(OP_FAILED_PREFIX)) continue;
                     const decoded = decodeOpUrl(item.url);
                     if (!decoded) continue;
+                    if (decoded.opId && seenOpIds.has(decoded.opId)) {
+                        // 同一 opId 已在队列里出现过 → 跳过（同步去重）
+                        continue;
+                    }
+                    if (decoded.opId) seenOpIds.add(decoded.opId);
                     decoded.chromeId = item.id;
                     ops.push(decoded);
                 }
@@ -142,10 +204,13 @@
                 const folderId = await this._ensureFolder();
                 const items = await chrome.bookmarks.getChildren(folderId);
                 const ops = [];
+                const seenOpIds = new Set();
                 for (const item of items) {
                     if (!item.url || !item.title.startsWith(OP_FAILED_PREFIX)) continue;
                     const decoded = decodeOpUrl(item.url);
                     if (!decoded) continue;
+                    if (decoded.opId && seenOpIds.has(decoded.opId)) continue;
+                    if (decoded.opId) seenOpIds.add(decoded.opId);
                     decoded.chromeId = item.id;
                     decoded.failed = true;
                     ops.push(decoded);
@@ -157,12 +222,73 @@
             }
         }
 
+        // 拿所有已应用 op 的 opId 集合（墓簿）
+        async appliedOpIds() {
+            try {
+                const folderId = await this._ensureAppliedFolder();
+                const items = await chrome.bookmarks.getChildren(folderId);
+                const set = new Set();
+                for (const item of items) {
+                    if (!item.url) continue;
+                    const opId = decodeAppliedUrl(item.url);
+                    if (opId) set.add(opId);
+                }
+                return set;
+            } catch (e) {
+                console.error('[BookmarkQueue] appliedOpIds failed', e);
+                return new Set();
+            }
+        }
+
         // 删除一个 op（成功消费后调用）
         async remove(chromeId) {
             try {
                 await chrome.bookmarks.remove(chromeId);
             } catch (e) {
                 console.error('[BookmarkQueue] remove failed', chromeId, e);
+            }
+        }
+
+        // 把一个 op 标记为已应用：移到 __applied__ 子文件夹
+        // 保留一个书签作为"墓碑"，url = chrome-extension-applied://<opId>
+        // 标题 = opId（前 8 字符 + ...）便于排查
+        async markApplied(chromeId, opId) {
+            try {
+                if (!opId) {
+                    console.warn('[BookmarkQueue] markApplied: missing opId, falling back to remove', chromeId);
+                    await this.remove(chromeId);
+                    return;
+                }
+                const appliedFolderId = await this._ensureAppliedFolder();
+                const url = `${APPLIED_URL_PREFIX}${encodeURIComponent(opId)}`;
+                const title = `applied:${opId.slice(0, 8)}`;
+                // 在墓簿文件夹下创建新书签，再删除原 op
+                await chrome.bookmarks.create({
+                    parentId: appliedFolderId,
+                    title,
+                    url,
+                });
+                await chrome.bookmarks.remove(chromeId);
+                // 墓簿上限：超过 MAX_APPLIED 时清理最旧的
+                await this._trimApplied(appliedFolderId);
+            } catch (e) {
+                console.error('[BookmarkQueue] markApplied error', e);
+            }
+        }
+
+        async _trimApplied(appliedFolderId) {
+            try {
+                const items = await chrome.bookmarks.getChildren(appliedFolderId);
+                if (items.length <= MAX_APPLIED) return;
+                // 按 dateAdded 升序，删最旧的
+                const sorted = items.slice().sort((a, b) => (a.dateAdded || 0) - (b.dateAdded || 0));
+                const toRemove = sorted.slice(0, items.length - MAX_APPLIED);
+                for (const item of toRemove) {
+                    try { await chrome.bookmarks.remove(item.id); } catch (e) { /* ignore */ }
+                }
+                console.log('[BookmarkQueue] trimmed applied tombstones:', toRemove.length);
+            } catch (e) {
+                console.warn('[BookmarkQueue] _trimApplied failed:', e.message);
             }
         }
 
@@ -185,8 +311,8 @@
         // 清空整个队列（危险操作，给设置面板的"清空队列"按钮用）
         async clear() {
             try {
-                const folderId = await this._ensureFolder();
-                const items = await chrome.bookmarks.getChildren(folderId);
+                const queueFolderId = await this._ensureFolder();
+                const items = await chrome.bookmarks.getChildren(queueFolderId);
                 for (const item of items) {
                     try { await chrome.bookmarks.remove(item.id); } catch (e) { /* ignore */ }
                 }
@@ -288,13 +414,19 @@
     }
 
     // ----- Export -----
-    const api = { BookmarkQueue, Trash, Snapshot, QUEUE_FOLDER_TITLE, OP_URL_PREFIX, decodeOpUrl };
+    const api = {
+        BookmarkQueue, Trash, Snapshot,
+        QUEUE_FOLDER_TITLE, APPLIED_FOLDER_TITLE, OP_URL_PREFIX, APPLIED_URL_PREFIX,
+        decodeOpUrl, decodeAppliedUrl, uuidv4,
+    };
 
     if (typeof window !== 'undefined') {
         window.BookmarkQueue = BookmarkQueue;
         window.Trash = Trash;
         window.Snapshot = Snapshot;
         window.decodeOpUrl = decodeOpUrl;
+        window.decodeAppliedUrl = decodeAppliedUrl;
+        window.uuidv4 = uuidv4;
     }
     if (typeof module !== 'undefined' && module.exports) {
         module.exports = api;
@@ -303,5 +435,6 @@
         self.BookmarkQueue = BookmarkQueue;
         self.Trash = Trash;
         self.Snapshot = Snapshot;
+        self.uuidv4 = uuidv4;
     }
 })(typeof globalThis !== 'undefined' ? globalThis : this);

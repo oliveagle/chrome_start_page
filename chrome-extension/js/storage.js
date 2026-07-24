@@ -76,12 +76,14 @@ class StorageManager {
     }
 
     // 添加新组
-    async addGroup(name) {
+    // 如果传入 id 则使用传入值（用于跨设备同步时保持 id 稳定），
+    // 否则生成新的 UUID v4
+    async addGroup(name, providedId = null) {
         const groups = await this.getGroups();
         // order: 当前最大 order + 1，没有就 0
         const maxOrder = groups.reduce((m, g) => Math.max(m, (g.order || 0)), -1);
         const newGroup = {
-            id: this.generateId(),
+            id: providedId || this.generateId(),
             name: name.trim(),
             order: maxOrder + 1,
             createdAt: new Date().toISOString(),
@@ -186,6 +188,8 @@ class StorageManager {
     }
 
     // 添加新书签
+    // 如果传入 id 则使用传入值（用于跨设备同步时保持 id 稳定），
+    // 否则生成新的 UUID v4
     async addBookmark(bookmarkData) {
         const bookmarks = await this.getBookmarks();
 
@@ -197,7 +201,7 @@ class StorageManager {
         }
 
         const newBookmark = {
-            id: this.generateId(),
+            id: bookmarkData.id || this.generateId(),
             title: bookmarkData.title.trim(),
             url: this.normalizeUrl(bookmarkData.url),
             groupId: bookmarkData.groupId,
@@ -308,9 +312,18 @@ class StorageManager {
         return new Blob([JSON.stringify(obj)]).size;
     }
 
-    // 生成唯一ID
+    // 生成唯一ID (RFC 4122 UUID v4)
+    // 跨设备/跨浏览器天然唯一，替代旧的 Date.now() + Math.random() 拼接
     generateId() {
-        return 'id_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+        // 极端 fallback
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+        });
     }
 
     // 标准化URL

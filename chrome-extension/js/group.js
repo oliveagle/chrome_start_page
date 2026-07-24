@@ -54,7 +54,8 @@ class GroupManager {
                 throw new Error('已存在相同名称的组');
             }
 
-            // 创建新组
+            // 创建新组（storage.addGroup 内部会生成 UUID v4 作为 id，
+            // 调用方可显式传 id 用于同步数据，不传则自动生成）
             const newGroup = await this.storage.addGroup(trimmedName);
             
             if (newGroup) {

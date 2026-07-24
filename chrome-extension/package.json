@@ -2,7 +2,11 @@
   "dependencies": {
     "sharp": "^0.34.5"
   },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  },
   "scripts": {
-    "update-icons": "node scripts/resize-icon.js"
+    "update-icons": "node scripts/resize-icon.js",
+    "test": "vitest run"
   }
 }

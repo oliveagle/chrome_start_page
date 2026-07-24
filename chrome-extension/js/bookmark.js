@@ -100,6 +100,7 @@ class BookmarkManager {
             }
 
             const newBookmark = {
+                id: bookmarkData.id || this.storage.generateId(),
                 title: bookmarkData.title.trim(),
                 url: normalizedUrl,
                 groupId: bookmarkData.groupId,
