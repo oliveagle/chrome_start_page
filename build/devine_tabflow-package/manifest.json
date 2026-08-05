@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "devine_tabflow",
+  "short_name": "tabflow",
+  "version": "1.0.1",
+  "description": "Customizable new tab dashboard with bookmark groups, color folders, and personal backgrounds. All data stays local.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "chrome_url_overrides": {
+    "newtab": "new-tab.html"
+  },
+  "background": {
+    "service_worker": "js/background.js"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "bookmarks",
+    "contextMenus",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "devine_tabflow",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

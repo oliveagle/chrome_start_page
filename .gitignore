@@ -1,6 +1,6 @@
 *.zip
 .DS_Store
-build/
+build/*.zip
 node_modules/
 
 # Local artifacts

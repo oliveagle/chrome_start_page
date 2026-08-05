@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>devine_tabflow</title>
+        <link rel="stylesheet" href="css/styles.css" />
+        <link rel="stylesheet" href="css/reset.css" />
+    </head>
+    <body>
+        <div class="container">
+            <!-- Header Section -->
+            <header class="header">
+                <h1 class="title">我的首页</h1>
+            </header>
+
+            <!-- 固定到右下角的按钮 -->
+            <div class="header-actions">
+                <button id="addGroupBtn" class="btn btn-primary">添加分组</button>
+                <button id="addBookmarkBtn" class="btn btn-secondary">添加书签</button>
+                <button id="settingsBtn" class="btn btn-tertiary">设置</button>
+            </div>
+
+            <!-- 书签分组区域 -->
+            <div class="bottom-section">
+                <!-- Main Content: Groups Grid -->
+                <main class="main-content">
+                    <div id="groupsGrid" class="groups-grid">
+                        <!-- Groups will be dynamically added here -->
+                    </div>
+                </main>
+
+                <!-- Empty State -->
+                <div id="emptyState" class="empty-state" style="display: none">
+                    <div class="empty-icon">📋</div>
+                    <h2>还没有任何分组</h2>
+                    <p>点击上方"添加分组"按钮开始创建您的第一个书签分组</p>
+                </div>
+
+                <!-- Help Tips -->
+                <div class="help-tips">
+                    <p>
+                        💡 <strong>小提示：</strong> 按住 <kbd>Cmd</kbd> (Mac) 或
+                        <kbd>Ctrl</kbd> (Windows) 点击书签可在后台打开
+                    </p>
+                    <p>📧 <strong>邮件书签：</strong> 右键点击邮件书签可选择"在后台新窗口打开"</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modals -->
+        <!-- Add/Edit Group Modal -->
+        <div id="groupModal" class="modal" style="display: none">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="groupModalTitle">添加新分组</h3>
+                    <button class="modal-close" data-modal="groupModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="groupForm">
+                        <div class="form-group">
+                            <label for="groupName">分组名称</label>
+                            <input
+                                type="text"
+                                id="groupName"
+                                name="groupName"
+                                required
+                                maxlength="50"
+                            />
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-cancel" data-modal="groupModal">
+                                取消
+                            </button>
+                            <button type="submit" class="btn btn-primary">保存</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add/Edit Bookmark Modal -->
+        <div id="bookmarkModal" class="modal" style="display: none">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="bookmarkModalTitle">添加新书签</h3>
+                    <button class="modal-close" data-modal="bookmarkModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="bookmarkForm">
+                        <div class="form-group">
+                            <label for="bookmarkTitle">书签标题</label>
+                            <div style="display: flex; gap: 8px; align-items: center">
+                                <input
+                                    type="text"
+                                    id="bookmarkTitle"
+                                    name="bookmarkTitle"
+                                    required
+                                    maxlength="100"
+                                    style="flex: 1"
+                                />
+                                <button
+                                    type="button"
+                                    id="refreshTitleBtn"
+                                    class="btn btn-secondary"
+                                    title="刷新标题"
+                                >
+                                    🔄
+                                </button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="bookmarkUrl">网址</label>
+                            <div style="display: flex; gap: 8px; align-items: center">
+                                <input
+                                    type="url"
+                                    id="bookmarkUrl"
+                                    name="bookmarkUrl"
+                                    required
+                                    style="flex: 1"
+                                />
+                                <button
+                                    type="button"
+                                    id="refreshIconBtn"
+                                    class="btn btn-secondary"
+                                    title="获取图标"
+                                >
+                                    🔄
+                                </button>
+                            </div>
+                        </div>
+                        <div class="form-group" id="iconPreviewGroup" style="display: none">
+                            <label>图标预览</label>
+                            <div style="display: flex; align-items: center; gap: 12px">
+                                <img
+                                    id="iconPreview"
+                                    src=""
+                                    alt="Icon"
+                                    style="
+                                        width: 32px;
+                                        height: 32px;
+                                        border: 1px solid #ddd;
+                                        border-radius: 4px;
+                                    "
+                                />
+                                <span id="iconStatus" style="font-size: 12px; color: #666"></span>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="customIconUrl">自定义图标地址（可选）</label>
+                            <div style="display: flex; gap: 8px; align-items: center">
+                                <input
+                                    type="url"
+                                    id="customIconUrl"
+                                    name="customIconUrl"
+                                    placeholder="输入图标URL地址"
+                                    style="flex: 1"
+                                />
+                                <button
+                                    type="button"
+                                    id="previewCustomIconBtn"
+                                    class="btn btn-secondary"
+                                    title="预览"
+                                >
+                                    👁️
+                                </button>
+                            </div>
+                            <small style="font-size: 11px; color: #718096"
+                                >填写后将优先使用自定义图标</small
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label for="bookmarkGroup">所属分组</label>
+                            <select id="bookmarkGroup" name="bookmarkGroup" required>
+                                <option value="">请选择分组</option>
+                            </select>
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-cancel" data-modal="bookmarkModal">
+                                取消
+                            </button>
+                            <button type="submit" class="btn btn-primary">保存</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Confirmation Modal -->
+        <div id="confirmModal" class="modal" style="display: none">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="confirmTitle">确认操作</h3>
+                    <button class="modal-close" data-modal="confirmModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p id="confirmMessage"></p>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-cancel" data-modal="confirmModal">
+                            取消
+                        </button>
+                        <button type="button" id="confirmAction" class="btn btn-danger">
+                            确认
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div id="settingsModal" class="modal" style="display: none">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>设置</h3>
+                    <button class="modal-close" data-modal="settingsModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="settingsForm">
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="syncToChromeBookmarks" />
+                                启用Chrome书签同步
+                            </label>
+                            <small
+                                >启用后，扩展的书签会自动推送到 Chrome 书签里名为"Chrome Start Page
+                                Bookmarks"的文件夹，由 Chrome 自身同步到你的 Google
+                                账户；下方两个按钮可手工立即同步。</small
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label>Chrome 书签同步操作</label>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                                <button
+                                    type="button"
+                                    id="settingsSyncFromChromeBtn"
+                                    class="btn btn-success"
+                                    title="读取 Chrome 书签里 Chrome Start Page Bookmarks 文件夹到扩展"
+                                >
+                                    📥 从Chrome读取
+                                </button>
+                                <button
+                                    type="button"
+                                    id="settingsSyncToChromeBtn"
+                                    class="btn btn-primary"
+                                    title="将扩展里的分组和书签写入到 Chrome 书签"
+                                >
+                                    📤 写入Chrome
+                                </button>
+                            </div>
+                            <small
+                                id="settingsSyncStatus"
+                                style="
+                                    display: block;
+                                    margin-top: 6px;
+                                    font-size: 11px;
+                                    color: #718096;
+                                "
+                                >就绪</small
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label>操作队列（双向同步）</label>
+                            <div
+                                id="queueStats"
+                                style="font-size: 12px; color: #4a5568; margin-bottom: 8px"
+                            >
+                                加载中…
+                            </div>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap">
+                                <button
+                                    type="button"
+                                    id="queueRefreshBtn"
+                                    class="btn btn-secondary"
+                                    title="刷新队列状态"
+                                >
+                                    🔄 刷新
+                                </button>
+                                <button
+                                    type="button"
+                                    id="queueDrainBtn"
+                                    class="btn btn-primary"
+                                    title="立刻执行队列里所有待处理操作"
+                                >
+                                    ▶ 立即排空
+                                </button>
+                                <button
+                                    type="button"
+                                    id="queueRetryBtn"
+                                    class="btn btn-secondary"
+                                    title="重试所有失败的操作"
+                                >
+                                    🔁 重试失败
+                                </button>
+                                <button
+                                    type="button"
+                                    id="queueClearBtn"
+                                    class="btn btn-cancel"
+                                    title="清空队列（慎用：丢失所有未同步操作）"
+                                >
+                                    🗑 清空队列
+                                </button>
+                            </div>
+                            <small
+                                style="
+                                    display: block;
+                                    margin-top: 6px;
+                                    font-size: 11px;
+                                    color: #718096;
+                                "
+                                >队列存在 Chrome 书签的 <code>__op_queue__</code> 文件夹里，随
+                                Chrome 账户自动跨设备同步。</small
+                            >
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="autoFetchIcons" />
+                                自动获取网站图标
+                            </label>
+                            <small>启用后，添加书签时会自动尝试获取网站的favicon作为图标</small>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="showEmptyGroups" />
+                                显示空分组
+                            </label>
+                            <small>启用后，即使分组中没有书签也会显示该分组</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="theme">主题</label>
+                            <select id="theme">
+                                <option value="default">默认</option>
+                                <option value="dark">深色</option>
+                                <option value="light">浅色</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="background">背景</label>
+                            <select id="background">
+                                <option value="gradient">渐变</option>
+                                <option value="solid">纯色</option>
+                                <option value="image">图片</option>
+                            </select>
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-cancel" data-modal="settingsModal">
+                                取消
+                            </button>
+                            <button type="submit" class="btn btn-primary">保存</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scripts -->
+        <script src="js/storage.js"></script>
+        <script src="js/ops.js"></script>
+        <script src="js/group.js"></script>
+        <script src="js/bookmark.js"></script>
+        <script src="js/main/render.js"></script>
+        <script src="js/main/sync.js"></script>
+        <script src="js/main/event.js"></script>
+        <script src="js/main.js"></script>
+    </body>
+</html>
