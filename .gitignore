@@ -1,6 +1,7 @@
 *.zip
 .DS_Store
 build/*.zip
+build/chrome-start-page-package/
 node_modules/
 
 # Local artifacts
